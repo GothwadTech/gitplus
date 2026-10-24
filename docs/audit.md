@@ -55,7 +55,7 @@ No real GitHub write/delete/merge operations or Cloudflare account deployment ar
 
 ## Current known limitations / next work
 
-- Gothwad Accounts SSO and its read-only backend adapter are now implemented. GitHub authorization remains PAT-based; a server-side GitHub App/OAuth credential flow and vault are not implemented.
+- Accounts SSO, OAuth App + PAT and the actual shared account menu are implemented. No token vault/D1 is intended. Runtime OAuth credentials and live first-party/provider acceptance remain operator work; see [setup](github-oauth.md).
 - GitHub Actions log redirects and private raw-file/image downloads may fail in a browser because of CORS or authorization. Opening the resource on GitHub is the safe fallback; do not paste tokens into raw URLs.
 - Empty repositories need an initial commit before batch ZIP sync. Large/truncated recursive trees are blocked instead of partially compared. A full subtree traversal workflow is future work.
 - Repository lists paginate; several other endpoint lists (branches, releases, issues, PR files, jobs, etc.) still return a limited page. Full pagination/UI for all endpoints remains to be implemented.
@@ -72,4 +72,14 @@ Run `npm ci && npm run check` for current results. The expanded suite checks the
 
 The initial 20-test count above describes the earlier repair, not the expanded suite. Real Accounts cookie acceptance across products, DNS/custom-domain provisioning and live GitHub writes still require the operator's staging checklist. No deployment or modification to Accounts/Mail/Store/Drive was made here.
 
-Latest local follow-up checks: **40 regression tests passed**, **3 Playwright browser tests passed**, TypeScript and production build passed, Pages Functions compiled, and `npm audit --audit-level=moderate` reported **0 known vulnerabilities**. Browser checks cover automatic existing-session recognition, GitHub owner isolation on account switch, local sign-out across reload, return/error behavior without redirect loops, and the real local Functions unsupported-domain/JSON-404 responses. Upstream identity/GitHub responses are mocked in the authenticated browser cases; this does not claim live Accounts SSO is deployed.
+Previous SSO-only follow-up checks: **40 regression tests passed**, **3 Playwright browser tests passed**, TypeScript and production build passed, Pages Functions compiled, and `npm audit --audit-level=moderate` reported **0 known vulnerabilities**. Browser checks cover automatic existing-session recognition, GitHub owner isolation on account switch, local sign-out across reload, return/error behavior without redirect loops, and the real local Functions unsupported-domain/JSON-404 responses. Upstream identity/GitHub responses are mocked in the authenticated browser cases; this does not claim live Accounts SSO is deployed.
+
+## OAuth App + universal menu verification (2026-10-24)
+
+- Implemented the accepted OAuth App + PAT design: mandatory Accounts identity, base scopes plus explicit optional `delete_repo`, same-tab S256 PKCE, encrypted ten-minute transaction cookie, verified-owner callback/completion and local owner-bound session storage. No D1, refresh-token persistence, GitHub App installation flow or cross-device sync.
+- Replaced the local menu with the actual Accounts-hosted universal module. Explicit slot/global sign-out uses narrowly routed, origin-checked, verified mutations; local GitPlus sign-out stays local. CSP and the trusted-script supply-chain boundary are documented.
+- **52 unit/regression tests passed**, including state/PKCE/owner rejection, expiry/tampering, secret rotation, one-use exchange failure, sign-out and widget loader contracts.
+- **8 Playwright browser tests passed** with real built Pages assets, pinned actual widget modules and mocked Accounts/GitHub: OAuth completion/reload/disconnect, PAT fallback, denial, widget mutation/failure and stale completion after a Gothwad account switch, plus existing SSO/isolation tests.
+- TypeScript, production Vite build and Pages Functions compilation passed. `npm audit --audit-level=moderate` reported **0 known vulnerabilities**; `git diff --check` passed.
+- The browser mock uses a consent document and fresh navigation because Playwright only intercepts the first request of a server redirect chain. Real callback 303 behavior is covered by server tests. This is not a live OAuth provider test.
+- [Administrator documentation](github-oauth.md) includes exact OAuth App URLs, runtime-secret CLI prompts for dashboard-restricted Pages projects, redeploy/config verification, scope limits and revocation. No real credentials were supplied/configured. Live OAuth/SSO/custom-domain and hosted-module acceptance remain required.

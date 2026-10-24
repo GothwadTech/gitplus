@@ -8,12 +8,14 @@ GitPlus is a Gothwad Tech product. Its identity provider is Gothwad Accounts; Gi
 Cloudflare Pages: dist/ static React app
   /api/* -> root Pages Function
     /api/session -> verified Accounts cookie session -> public identity only
+    /api/github/* -> OAuth App state, callback and code exchange (no token vault)
+    /api/accounts/signout[-all] -> explicit, verified universal-menu mutations
     other paths -> JSON 404
 
 Browser after verified Accounts identity
-  -> GitHub REST API using the separately connected GitHub PAT
+  -> GitHub REST API using the separately connected OAuth token or PAT
   -> JSZip + Web Crypto for local ZIP comparison
-  -> sessionStorage: owner-bound GitHub PAT, account selector, local sign-out marker
+  -> sessionStorage: owner-bound GitHub token, short-lived OAuth verifier, account selector, local sign-out marker
   -> localStorage: non-secret appearance/editor preferences only
 ```
 
@@ -26,6 +28,10 @@ No new database, AI backend, Express server or self-issued Gothwad login token e
 | `shared/brand.ts` | GitPlus / Gothwad Tech public identity and default first-party domains |
 | `shared/accounts.ts` | Public identity types, schema normalization, safe return URL and selectors |
 | `functions/api/[[path]].ts` | Pages route dispatch; no accidental SPA fallback for API requests |
+| `server/githubOAuth.ts`, `server/protectedRequest.ts` | Exact-origin JSON/Accounts verification, encrypted transaction cookie, S256 PKCE, fixed provider exchange |
+| `server/accountActions.ts` | Narrow, explicit sign-out routes; approved rotations/deletions only |
+| `src/services/githubOAuth.ts` | Same-tab verifier, single-flight completion and owner/generation guards |
+| `src/services/accounts/accountWidget.ts`, `AccountsBar.tsx` | Real hosted universal menu, sanitized state and guarded callbacks |
 | `server/accountsSession.ts` | Trusted upstream request, cookie filtering, timeout, public-profile projection, no-store responses |
 | `src/services/accounts/sessionClient.ts` | Single-flight, selector-keyed, abortable session requests; explicit error states |
 | `src/context/AccountsContext.tsx` | Automatic session boot/revalidation, account switching, local sign-out pause, generation isolation |
@@ -33,7 +39,7 @@ No new database, AI backend, Express server or self-issued Gothwad login token e
 | `src/App.tsx` | Verified user's GitHub workspace; lazy-loaded tabs and overlays |
 | `src/components/AuthScreen.tsx` | **Connect GitHub**, not the product identity login |
 | `src/services/github.ts` | GitHub REST API, cancellable request generations, live trees, pagination, batch commits |
-| `src/utils/tokenStorage.ts` | Session-only PAT with verified Gothwad user ID ownership; unbound legacy tokens removed |
+| `src/utils/tokenStorage.ts` | Session-only OAuth token/PAT with verified Gothwad user ID ownership; unbound legacy tokens removed |
 | `src/utils/zipParser.ts`, `paths.ts`, `encoding.ts` | ZIP byte budgets, path safety and byte-exact Git SHA/Base64 |
 | `src/components/ErrorBoundary.tsx` | Reload recovery on render failure |
 
@@ -54,7 +60,7 @@ No local profile/cookie decoding is considered proof of authentication. The UI h
 
 A temporary identity-service outage blocks the workspace and invalidates pending GitHub calls without deliberately deleting the same-owner PAT. Successful revalidation can restore that connection. An identity change or local sign-out deletes the old connection. Unsaved UI/draft state is not durable and can reset when the gate closes.
 
-The implementation does not introduce a global account-menu script or widen CSP to external scripts: its local account menu uses Accounts-derived, sanitized metadata. Global account management stays on Accounts.
+The app imports the actual `https://accounts.gothwadtech.com/widget/account-menu.js` ES module and relative template/style modules. CSP permits only that external script directory. Its state is sanitized; callbacks use GitPlus verification/switching and protected sign-out routes instead of raw `/auth/me`. This shared script is trusted app code with access to local GitHub tokens, not a sandbox. Load failure shows a management link, not a cloned menu. See [OAuth protocol](github-oauth.md) and [security](security.md).
 
 ## Tooling
 

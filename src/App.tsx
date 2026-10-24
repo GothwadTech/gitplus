@@ -1,4 +1,5 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
+import { oauthReturn, completeGitHubOAuth } from './services/githubOAuth';
 import { GitHubApiError, githubService } from './services/github';
 import { GitHubUser, GitHubRepo, GitHubRateLimit } from './types/github';
 import { AuthScreen } from './components/AuthScreen';
@@ -17,6 +18,8 @@ import { AccountsProvider, useAccounts } from './context/AccountsContext';
 import { AccountsBar, AccountsGate } from './components/accounts/AccountsGate';
 
 function MainApp() {
+  const { state: accountState } = useAccounts();
+  const [returnedOAuth] = useState(oauthReturn);
   const [user, setUser] = useState<GitHubUser | null>(null);
   const [appError, setAppError] = useState<string | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
@@ -42,14 +45,16 @@ function MainApp() {
   }, []);
 
   const checkAuthentication = async () => {
-    if (!githubService.hasToken()) {
+    if (!returnedOAuth && !githubService.hasToken()) {
       setLoadingAuth(false);
       return;
     }
 
     try {
       setLoadingAuth(true);
-      const userData = await githubService.getAuthenticatedUser();
+      const userData = returnedOAuth && accountState.status === 'authenticated'
+        ? await completeGitHubOAuth(accountState.user.id, returnedOAuth)
+        : await githubService.getAuthenticatedUser();
       setUser(userData);
       await loadInitialData();
     } catch (error) {

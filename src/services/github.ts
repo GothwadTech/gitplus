@@ -40,6 +40,8 @@ export class GitHubService {
   private sessionAbort = new AbortController();
   private accessPaused = false;
 
+  public getAccountId() { return this.accountId; }
+
   public getGeneration() { return this.epoch; }
 
   private invalidateRequests() {

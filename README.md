@@ -7,7 +7,7 @@ A mobile-first GitHub workspace built with React, TypeScript, Vite and Tailwind.
 ## Two separate connections
 
 1. **Sign in to GitPlus with Gothwad Accounts.** Existing first-party Accounts sessions are recognized automatically. A same-origin Cloudflare Pages Function verifies HttpOnly cookies with the Accounts API and returns only a public profile.
-2. **Connect GitHub separately.** Gothwad login does not grant GitHub repository permissions. The current connection uses a user-provided GitHub PAT scoped to the verified Gothwad user ID and this tab. A server-side GitHub App integration is future work, not implemented authentication.
+2. **Connect GitHub separately.** Gothwad login does not grant GitHub repository permissions. Use **Connect with GitHub** (OAuth App) or a manually supplied PAT. Either connection is bound to the verified Gothwad user ID and stored only in this tab session. No D1 or cross-device token sync is used.
 
 No Gothwad password, Accounts access token or refresh token is stored by the browser app. GitHub PATs still need careful handling: session storage is not an encrypted vault.
 
@@ -17,10 +17,11 @@ This is now **Pages + a small Pages Function**, not a static-only deployment:
 
 ```text
 Browser -> /api/session (Pages Function) -> Gothwad Accounts /api/auth/me
-        -> GitHub REST API (separate GitHub PAT)
+        -> /api/github/* (Pages Functions: OAuth state/callback/code exchange)
+        -> GitHub REST API (local OAuth token or PAT)
 ```
 
-No new D1/R2 database, Accounts JWT secret, OAuth client secret or GitHub token is required in Pages environment settings. Accounts continues owning sessions.
+No new D1/R2 database or Accounts JWT secret is required. Accounts continues owning sessions. GitHub OAuth requires runtime `GITHUB_CLIENT_ID` and encrypted `GITHUB_CLIENT_SECRET`; PAT works without these. See [OAuth setup and CLI fallback](docs/github-oauth.md) if Pages dashboard runtime editing is disabled.
 
 **Silent SSO requires a first-party HTTPS custom domain.** The proposed/default origin is `https://gitplus.gothwadtech.com`; configure that domain in Pages before production use. `pages.dev`, localhost and Arena preview domains cannot receive `.gothwadtech.com` cookies. They deliberately show a setup message, not fake authentication. The custom domain is configured in source but has **not** been provisioned or deployed by this repair.
 
@@ -73,14 +74,15 @@ CI has a separate browser job that installs Chromium and runs these checks. `PLA
 | Runtime `GITPLUS_ORIGIN` | `https://gitplus.gothwadtech.com` (change if using another first-party subdomain) |
 | Runtime `ACCOUNTS_API_ORIGIN` | `https://api.gothwadtech.com` |
 | Functions | Root `functions/` must be deployed with the app |
-| Secrets / new database | None for this Accounts-cookie integration |
+| OAuth runtime credentials | `GITHUB_CLIENT_ID`, encrypted `GITHUB_CLIENT_SECRET`; never `VITE_*` |
+| New database | None |
 
-Values above are non-secret runtime variables, already declared in `wrangler.jsonc`. Do not upload only the static `dist` directory through a method that omits Functions. See [deployment instructions](docs/cloudflare-pages.md).
+The two origins are non-secret runtime variables already declared in `wrangler.jsonc`. OAuth credentials must be configured separately; no real secret is checked in. Do not upload only the static `dist` directory through a method that omits Functions. See [deployment instructions](docs/cloudflare-pages.md).
 
 ## Project layout
 
 ```text
-functions/api/[[path]].ts   Same-origin session route + JSON API 404s
+functions/api/[[path]].ts   Session, OAuth and explicit sign-out routes + JSON API 404s
 server/accountsSession.ts  Accounts verification and cookie/public-profile filtering
 shared/                    Product identity and shared Accounts contract
 src/
@@ -88,7 +90,7 @@ src/
   components/accounts/         Gothwad login gate and account menu
   services/accounts/           Abortable single-flight session client
   services/github.ts           GitHub API and non-forced batch sync
-  utils/                       Owner-bound PAT, ZIP, encoding and storage helpers
+  utils/                       Owner-bound GitHub token, ZIP, encoding and storage helpers
 public/                    _headers, _routes.json, favicon, robots.txt
 docs/                      Product plan, integration research and operations
 tests/                     Regression tests with mocked upstream services
@@ -102,7 +104,7 @@ Generated `dist/`, `.wrangler/`, dependencies, `.env*` and `.dev.vars*` are not 
 
 - Signed-in Accounts identity is rechecked on startup, on visible-tab intervals and focus; no persistent profile acts as authentication.
 - Switching Gothwad users clears the GitHub connection and invalidates in-flight operations. A late response cannot sign a new user in as the previous one.
-- “Disconnect GitHub” and “Sign out of GitPlus (this tab)” are distinct. Global Gothwad sign-out is managed on Accounts; GitPlus does not silently sign Mail/Drive/Store out.
+- “Disconnect GitHub” and “Sign out of GitPlus (this tab)” are distinct. The **actual hosted universal Accounts menu** supports explicitly confirmed ecosystem sign-out and local-only sign-out. Read-only checks never silently sign Mail/Drive/Store out.
 - ZIP paths are preserved by default; optional wrapper removal strips one outer directory only. Review all paths/deletions before syncing.
 - Batch sync requires an initialized branch, never force-pushes and aborts on partial upload failures. Start with a disposable repository.
 
@@ -111,6 +113,7 @@ Generated `dist/`, `.wrangler/`, dependencies, `.env*` and `.dev.vars*` are not 
 - [Product identity and phased roadmap](docs/product-roadmap.md)
 - [Accounts research, contract and implementation](docs/gothwad-accounts.md)
 - [Cloudflare deployment and rollout checklist](docs/cloudflare-pages.md)
+- [GitHub OAuth App, scopes and runtime secrets](docs/github-oauth.md)
 - [Architecture](docs/architecture.md)
 - [Security and permissions](docs/security.md)
 - [Audit and remaining limitations](docs/audit.md)

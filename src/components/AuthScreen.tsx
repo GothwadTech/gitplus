@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Github,
   ExternalLink,
@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { githubService } from '../services/github';
 import { GitHubUser } from '../types/github';
+import { useAccounts } from '../context/AccountsContext';
+import { startGitHubOAuth } from '../services/githubOAuth';
 import { useTheme } from '../context/ThemeContext';
 
 interface AuthScreenProps {
@@ -33,6 +35,29 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess, initialError 
   const [error, setError] = useState<string | null>(initialError || null);
   const [showGuide, setShowGuide] = useState(false);
 
+  const { state: accountState } = useAccounts();
+  const [oauthEnabled, setOauthEnabled] = useState<boolean | null>(null);
+  const [oauthLoading, setOauthLoading] = useState(false);
+  const [allowDelete, setAllowDelete] = useState(false);
+  useEffect(() => {
+    let disposed = false;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 7000);
+    fetch('/api/github/config', { cache: 'no-store', credentials: 'same-origin', signal: controller.signal })
+      .then(async (response) => response.ok && (await response.json()).enabled === true)
+      .then((enabled) => { if (!disposed) setOauthEnabled(enabled); })
+      .catch(() => { if (!disposed) setOauthEnabled(false); })
+      .finally(() => clearTimeout(timer));
+    return () => { disposed = true; controller.abort(); clearTimeout(timer); };
+  }, []);
+  const connectOAuth = async () => {
+    if (accountState.status !== 'authenticated') return;
+    setOauthLoading(true);
+    setError(null);
+    try { window.location.assign(await startGitHubOAuth(accountState, allowDelete)); }
+    catch (error) { setError(error instanceof Error ? error.message : 'Could not start GitHub authorization.'); setOauthLoading(false); }
+  };
+
   // Prefer repository-scoped, expiring tokens instead of broad classic admin scopes.
   const githubPatUrl =
     'https://github.com/settings/personal-access-tokens/new';
@@ -41,7 +66,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess, initialError 
     if (e) e.preventDefault();
     const token = tokenInput.trim();
     if (!token) {
-      setError('Please paste or enter your GitHub GitHub Personal Access Token (PAT).');
+      setError('Please paste or enter your GitHub Personal Access Token (PAT).');
       return;
     }
 
@@ -142,6 +167,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess, initialError 
           <p className="text-sm text-[#5f6368] dark:text-[#9aa0a6]">
             You are signed in with Gothwad Accounts. GitHub access is a separate connection; your Gothwad password is never requested here.
           </p>
+          <section className="space-y-3" aria-label="GitHub OAuth connection">
+            <h2 className="text-lg font-bold">Connect your GitHub account</h2>
+            <p className="text-xs leading-relaxed text-[#5f6368] dark:text-[#9aa0a6]">Authorize on GitHub—no PAT to create or paste. Requests broad repository, workflow, gist, profile, email and organization-read access, subject to your GitHub permissions.</p>
+            <label className="flex items-center gap-2 text-xs"><input id="oauth-allow-delete" type="checkbox" checked={allowDelete} onChange={(e) => setAllowDelete(e.target.checked)} disabled={oauthLoading} />Request repository deletion access (destructive permission)</label>
+            <button id="github-oauth-connect" type="button" disabled={oauthEnabled !== true || oauthLoading || loading} onClick={connectOAuth} className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#0494f4] px-4 py-3 text-white font-bold text-sm disabled:opacity-50 disabled:cursor-not-allowed"><Github size={18} />{oauthLoading ? 'Opening GitHub…' : 'Connect with GitHub'}</button>
+            {oauthEnabled !== true && <p id="oauth-configuration-note" className="text-xs text-[#5f6368] dark:text-[#9aa0a6]">{oauthEnabled === null ? 'Checking OAuth availability…' : 'OAuth is unavailable or not configured. The administrator must configure the GitHub OAuth App runtime credentials. You can still use a PAT below.'}</p>}
+            <p className="text-[11px] text-[#5f6368] dark:text-[#9aa0a6]">Saved only in this tab session, bound to your Gothwad account. No D1 storage or cross-device sync. Unchecking deletion does not revoke an earlier GitHub grant; revoke it in GitHub settings.</p>
+          </section>
+          <div className="border-t border-[#dadce0] dark:border-[#3c4043] pt-4 text-xs font-semibold">Or connect manually with a PAT</div>
           {/* Quick Create Token Link Banner */}
           <div className="bg-[#f1f3f4] dark:bg-[#303134] border border-[#dadce0] dark:border-[#3c4043] rounded-2xl p-4 space-y-3">
             <div className="flex items-start gap-3">
@@ -222,7 +256,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess, initialError 
             <button
               id="connect-github-btn"
               type="submit"
-              disabled={loading || !tokenInput.trim()}
+              disabled={loading || oauthLoading || !tokenInput.trim()}
               className="w-full py-3 px-4 bg-[#0494f4] hover:bg-[#0382d6] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl shadow-sm transition flex items-center justify-center gap-2 active:scale-98"
             >
               {loading ? (
