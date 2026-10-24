@@ -83,3 +83,13 @@ Previous SSO-only follow-up checks: **40 regression tests passed**, **3 Playwrig
 - TypeScript, production Vite build and Pages Functions compilation passed. `npm audit --audit-level=moderate` reported **0 known vulnerabilities**; `git diff --check` passed.
 - The browser mock uses a consent document and fresh navigation because Playwright only intercepts the first request of a server redirect chain. Real callback 303 behavior is covered by server tests. This is not a live OAuth provider test.
 - [Administrator documentation](github-oauth.md) includes exact OAuth App URLs, runtime-secret CLI prompts for dashboard-restricted Pages projects, redeploy/config verification, scope limits and revocation. No real credentials were supplied/configured. Live OAuth/SSO/custom-domain and hosted-module acceptance remain required.
+
+## Follow-up: post-consent failure diagnostics (2026-10-24)
+
+A user reported that GitHub consent succeeded but GitPlus did not connect after returning. The live failure's exact cause remains unconfirmed; no production logs, cookies or real credentials were accessed. Code review confirmed that token-exchange failures lost their provider error categories, and the alert was below the PAT form.
+
+- Preserve only allowlisted GitHub failure categories, including JSON errors on non-2xx responses; distinguish malformed responses, transport failures and safe internal runtime failures.
+- Show stage and numeric HTTP status in a focused alert above the OAuth/PAT choices. Never reflect provider descriptions/URLs, arbitrary error strings or exception text.
+- Correct Pages dashboard guidance: **Settings → Variables and secrets** is the binding entry point; the separate Runtime panel is not where secrets are entered. No build-time secret injection or relaxed OAuth security checks.
+- Local validation: **56 unit tests, 11 browser tests**, TypeScript, production build and Functions compilation passed; dependency audit reported zero known vulnerabilities.
+- This repairs failure reporting/visibility; it is **not evidence that the reported live authorization problem has been resolved**. A fresh attempt on the diagnostic deployment is needed to identify the actual failing stage/reason.

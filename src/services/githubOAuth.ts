@@ -1,3 +1,4 @@
+import { oauthFailure } from '../../shared/githubOAuthErrors';
 import { challengeFor, OAUTH_PENDING_KEY, OAUTH_RETURN_PARAM, OAUTH_TTL_SECONDS, randomProof, validProof } from '../../shared/githubOAuth';
 import { record, type AuthenticatedSession } from '../../shared/accounts';
 import { githubService } from './github';
@@ -9,9 +10,20 @@ function currentAttempt(ownerId: string, generation: number) {
   if (githubService.getAccountId() !== ownerId || githubService.getGeneration() !== generation) throw new Error('Account connection changed. Start GitHub authorization again.');
 }
 async function api(path: string, data: unknown) {
-  const response = await fetch(path, { method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(20_000), headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(data) });
-  const result = record(await response.json());
-  if (!response.ok || !result) throw new Error(typeof result?.message === 'string' ? result.message : 'GitHub authorization could not be completed. Try again or use a PAT.');
+  const stage = path.endsWith('/start') ? 'start' : 'complete';
+  let response: Response;
+  try {
+    response = await fetch(path, { method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(20_000), headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(data) });
+  } catch { throw new Error(oauthFailure(stage, 'network_error')); }
+  let result: Record<string, unknown> | null;
+  try { result = record(await response.json()); }
+  catch { throw new Error(oauthFailure(stage, 'response_not_json', response.status)); }
+  if (!response.ok || !result) {
+    // Session verification has its own sanitized messages, but keep OAuth diagnostics
+    // allowlisted: never display arbitrary response bodies or unknown error strings.
+    const code = result?.error ?? (result?.status === 'anonymous' || result?.status === 'unavailable' ? 'account_unavailable' : 'unknown_error');
+    throw new Error(oauthFailure(stage, code, response.status, result?.providerStatus));
+  }
   return result;
 }
 export async function startGitHubOAuth(session: AuthenticatedSession, allowDelete: boolean): Promise<string> {
@@ -42,18 +54,13 @@ function cleanReturnUrl() {
   url.searchParams.delete('oauth_error');
   history.replaceState(null, '', url);
 }
-const messages: Record<string, string> = {
-  denied: 'GitHub authorization was cancelled. Try again or connect with a PAT.',
-  account_changed: 'Your Gothwad account changed during GitHub authorization. Start again.',
-  account_unavailable: 'Your Gothwad session could not be verified during authorization. Retry your connection.',
-};
 let completion: { owner: string; promise: Promise<GitHubUser> } | null = null;
 export function completeGitHubOAuth(ownerId: string, returned: { status: string; error: string | null }): Promise<GitHubUser> {
   if (completion?.owner === ownerId) return completion.promise;
   cleanReturnUrl();
   const epoch = githubService.getGeneration();
   const run = async () => {
-    if (returned.status !== 'complete') throw new Error(messages[returned.error || ''] || 'This GitHub authorization attempt expired or was invalid. Start again.');
+    if (returned.status !== 'complete') throw new Error(oauthFailure('callback', returned.error));
     let pending: Pending | null = null;
     try { pending = JSON.parse(sessionStorage.getItem(OAUTH_PENDING_KEY) || 'null'); } catch { /* Invalid/missing state is rejected. */ }
     if (!pending || pending.ownerId !== ownerId || pending.expires <= Date.now() || !validProof(pending.verifier) || !validProof(pending.state)) throw new Error('GitHub authorization must finish in the same tab and Gothwad account where it started. Please connect again.');

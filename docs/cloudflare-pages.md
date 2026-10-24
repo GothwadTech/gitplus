@@ -35,6 +35,8 @@ Create/connect a **Pages** project, not a plain Worker application:
 
 No new D1/R2 binding, `JWT_SECRET`, `MAIL_INTERNAL_TOKEN` or user GitHub PAT is required. **GitHub OAuth additionally needs runtime `GITHUB_CLIENT_ID` and encrypted `GITHUB_CLIENT_SECRET`.** These must not be `VITE_*` values. If dashboard runtime editing is disabled, use `npx wrangler pages secret put GITHUB_CLIENT_ID --project-name gitplus` and `npx wrangler pages secret put GITHUB_CLIENT_SECRET --project-name gitplus`, entering each value privately at the prompt. See [exact registration, CLI and redeploy steps](github-oauth.md). PAT remains available without OAuth configuration. Do not copy another product's secrets into this project. Runtime origins are not `VITE_*` variables. In a Wrangler-configured Pages project, keep runtime settings in the config source; use separate reviewed configuration for a dedicated staging project/origin rather than relying on divergent dashboard overrides.
 
+**Dashboard clarification:** Pages credentials go in **Settings → Variables and secrets**. The separate **Runtime** panel is for compatibility/placement, not a second secret-entry screen. Text/Secret bindings there can be read by Pages Functions; do not confuse them with explicitly build-only variables. Save and redeploy. A successful OAuth start shows bindings were present, not that GitHub has validated the pair.
+
 ## 3. First-party custom domain (required for real SSO)
 
 1. Add `gitplus.gothwadtech.com` (or your chosen first-party subdomain) through the Pages project's custom domain settings and follow Cloudflare's DNS/TLS instructions.

@@ -14,6 +14,12 @@ GitPlus is a Gothwad Tech product. **Gothwad Accounts sign-in is mandatory.** Gi
 4. Deploy/redeploy Pages **with Functions included**, then check the custom domain's `/api/github/config`. It should return `enabled: true` and public scopes, never credentials. This only checks that configuration is present and well-formed; it does not validate credentials against GitHub.
 5. Test real authorization/cancellation, account switching and disconnect on the first-party custom domain. A separate staging origin requires its own reviewed configuration and matching OAuth App callback.
 
+### Where to enter these in the Pages dashboard
+
+Use **Workers & Pages → gitplus → Settings → Variables and secrets** in the intended production environment. Add the Client ID as Text or Secret and the Client Secret as Secret/encrypted. This is the Pages Functions binding location; there is no separate “runtime secrets” form to find. The separate **Runtime** panel controls compatibility/placement, not secret values. An explicitly build-only variable is not a substitute for a Function binding. Save before deploying/redeploying.
+
+If the GitPlus button successfully starts authorization, the `/api/github/start` Function already found both values in its environment. This does **not** prove GitHub accepts the credential pair, but missing bindings should not be assumed to explain a later callback failure. Do not move or regenerate working secrets merely because the dashboard does not label them “runtime”.
+
 ### If dashboard runtime editing is disabled
 
 A Wrangler-managed Pages project may lock parts of dashboard configuration. A screen saying “Variables and secrets” / “Bindings” does not by itself establish that all variables are build-only. Keep non-secret origins in `wrangler.jsonc`; do not work around the UI by exposing credentials in the Vite bundle.
@@ -67,3 +73,24 @@ One OAuth transaction cookie exists per browser origin: simultaneous connection 
 ## Verification limits
 
 Unit tests cover state/PKCE/owner/origin checks, tampering, expiry, secret rotation, exchange failure and replay rejection. Browser tests mock GitHub consent/completion and Accounts responses, using real built assets and pinned real universal-menu fixtures. They do not prove live GitHub authorization, Cloudflare runtime-secret configuration or cross-product cookie behavior. Complete the deployment checklist before declaring the live integration ready.
+
+## Diagnosing a return that does not connect
+
+GitHub consent is only one step; the callback must still validate state/Accounts identity and exchange the code for a token. A reported production failure after consent is **not yet reproduced or attributed to a specific cause**. Tests below are not a live credential/provider validation.
+
+The earlier implementation discarded GitHub's specific error categories and placed the message below the PAT form. It now displays a focused alert above both connection options, with a safe stage/error/status such as `[complete:github_client_credentials; HTTP 400; GitHub HTTP 401]`. `start`, `callback` and `complete` identify the failing step; HTTP is the Pages response and “GitHub HTTP” is the upstream exchange response when available.
+
+| Diagnostic code | Meaning / next investigation |
+| --- | --- |
+| `github_client_credentials` | GitHub explicitly rejected the client credential pair; verify the deployed pair belongs to one OAuth App. |
+| `github_redirect_mismatch` | GitHub explicitly rejected the callback URI. |
+| `github_bad_code` | GitHub rejected an invalid, expired or already-used code; begin a fresh attempt. |
+| `github_pkce_rejected` | GitHub rejected the verifier; investigate same-tab attempt handling. |
+| `github_email_unverified` | GitHub requires primary-email verification. |
+| `invalid_state` / `invalid_transaction` | Callback cookie/state or completion proof could not be validated; investigate expiry, lost cookies, multiple attempts/tabs. |
+| `origin_not_allowed` | The protected request origin check failed; investigate the actual browser origin, without weakening CSRF checks. |
+| `account_unavailable` / `account_changed` | Accounts verification did not permit completion. |
+| `github_http_error` / `github_invalid_response` | Upstream failed or did not provide a valid token response; not enough evidence to blame credentials. |
+| `response_not_json` / `github_internal_error` | Investigate Pages routing/runtime, rather than asking the user to repeatedly change secrets. |
+
+Only fixed allowlisted categories and numeric HTTP statuses are displayed. Provider descriptions, exception text and unknown error strings are not reflected. No diagnostic endpoint exposes secret values, token responses, cookie contents or callback codes, and no request/response logging was added. Share only the visible diagnostic—not a HAR, full callback URL or network response containing credentials. Existing origin/owner/state/PKCE validation remains unchanged.
