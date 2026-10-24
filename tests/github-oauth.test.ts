@@ -166,3 +166,57 @@ test('global sign-out uses only the fixed Accounts endpoint; failed mutations do
     assert.equal((await response.json()).ok === true, success);
   }
 });
+
+test('token-exchange diagnostics distinguish allowlisted GitHub failures without reflecting sensitive bodies', async () => {
+  const cases = [
+    { body: { error: 'incorrect_client_credentials' }, status: 200, code: 'github_client_credentials', reply: 400 },
+    { body: { error: 'incorrect_client_credentials' }, status: 401, code: 'github_client_credentials', reply: 400 },
+    { body: { error: 'redirect_uri_mismatch' }, status: 200, code: 'github_redirect_mismatch', reply: 400 },
+    { body: { error: 'bad_verification_code' }, status: 200, code: 'github_bad_code', reply: 400 },
+    { body: { error: 'incorrect_code_verifier' }, status: 200, code: 'github_pkce_rejected', reply: 400 },
+    { body: { error: 'unverified_user_email' }, status: 200, code: 'github_email_unverified', reply: 400 },
+    { body: { error: 'unknown-secret-provider-string' }, status: 200, code: 'github_exchange_rejected', reply: 400 },
+    { body: { error: 'toString' }, status: 200, code: 'github_exchange_rejected', reply: 400 },
+    { body: { error: 'Not Found' }, status: 404, code: 'github_http_error', reply: 502 },
+    { body: {}, status: 200, code: 'github_invalid_response', reply: 502 },
+  ];
+  for (const scenario of cases) {
+    const p = provider(); const s = await start(p.fetcher); const cb = await callback(s, p.fetcher);
+    const response = await handleGitHubOAuth(makeRequest('/api/github/complete', { state: s.body.state, verifier: s.verifier }, readCookie(cb)), env, async (url, init) => {
+      if (String(url).includes('api.gothwadtech.com')) return p.fetcher(url, init);
+      return json({ ...scenario.body, error_description: env.GITHUB_CLIENT_SECRET, error_uri: 'https://example.invalid/?code=private-code', refresh_token: 'private-refresh-token' }, scenario.status);
+    });
+    assert.equal(response.status, scenario.reply);
+    const body = await response.json();
+    assert.equal(body.error, scenario.code);
+    assert.equal(body.providerStatus, scenario.status);
+    assert.deepEqual(Object.keys(body).sort(), ['error', 'message', 'providerStatus']);
+    for (const secret of [env.GITHUB_CLIENT_SECRET!, 'private-code', 'private-refresh-token', 'unknown-secret-provider-string']) assert.ok(!JSON.stringify(body).includes(secret));
+    assert.match(response.headers.get('Cache-Control')!, /no-store/);
+    assert.match(response.headers.getSetCookie().at(-1)!, /Max-Age=0/);
+  }
+});
+
+test('HTML, malformed JSON and transport failures during exchange have safe distinct diagnostics', async () => {
+  for (const mode of ['html', 'json', 'network'] as const) {
+    const p = provider(); const s = await start(p.fetcher); const cb = await callback(s, p.fetcher);
+    const response = await handleGitHubOAuth(makeRequest('/api/github/complete', { state: s.body.state, verifier: s.verifier }, readCookie(cb)), env, async (url, init) => {
+      if (String(url).includes('api.gothwadtech.com')) return p.fetcher(url, init);
+      if (mode === 'network') throw new Error('private-network-detail');
+      return new Response('private-invalid-body', { headers: { 'Content-Type': mode === 'html' ? 'text/html' : 'application/json' } });
+    });
+    const body = await response.json();
+    assert.equal(body.error, mode === 'network' ? 'github_unavailable' : 'github_invalid_response');
+    assert.ok(!JSON.stringify(body).includes('private-'));
+  }
+});
+
+test('unexpected runtime exceptions produce JSON diagnostics without exposing exception details', async (t) => {
+  t.mock.method(crypto.subtle, 'importKey', async () => { throw new Error('private-runtime-secret'); });
+  const response = await handleGitHubOAuth(makeRequest('/api/github/start', { challenge: randomProof(), selector: 'a' }), env, provider().fetcher);
+  assert.equal(response.status, 500);
+  const body = await response.json();
+  assert.equal(body.error, 'github_internal_error');
+  assert.ok(!JSON.stringify(body).includes('private-runtime-secret'));
+  assert.match(response.headers.get('Cache-Control')!, /no-store/);
+});

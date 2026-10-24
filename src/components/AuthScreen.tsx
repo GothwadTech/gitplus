@@ -34,6 +34,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess, initialError 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(initialError || null);
   const [showGuide, setShowGuide] = useState(false);
+  useEffect(() => {
+    if (error) document.getElementById('github-connection-error')?.focus();
+  }, [error]);
 
   const { state: accountState } = useAccounts();
   const [oauthEnabled, setOauthEnabled] = useState<boolean | null>(null);
@@ -167,6 +170,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess, initialError 
           <p className="text-sm text-[#5f6368] dark:text-[#9aa0a6]">
             You are signed in with Gothwad Accounts. GitHub access is a separate connection; your Gothwad password is never requested here.
           </p>
+          {error && (
+            <div id="github-connection-error" role="alert" tabIndex={-1} className="p-3 bg-[#ea4335]/10 border border-[#ea4335]/30 rounded-xl text-xs text-[#ea4335] flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span className="leading-relaxed break-words min-w-0">{error}</span>
+            </div>
+          )}
           <section className="space-y-3" aria-label="GitHub OAuth connection">
             <h2 className="text-lg font-bold">Connect your GitHub account</h2>
             <p className="text-xs leading-relaxed text-[#5f6368] dark:text-[#9aa0a6]">Authorize on GitHub—no PAT to create or paste. Requests broad repository, workflow, gist, profile, email and organization-read access, subject to your GitHub permissions.</p>
@@ -246,12 +255,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess, initialError 
               </div>
             </div>
 
-            {error && (
-              <div className="p-3 bg-[#ea4335]/10 border border-[#ea4335]/30 rounded-xl text-xs text-[#ea4335] flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span className="leading-relaxed">{error}</span>
-              </div>
-            )}
+
 
             <button
               id="connect-github-btn"

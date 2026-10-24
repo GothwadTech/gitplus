@@ -214,3 +214,25 @@ test('late OAuth completion cannot replace a newly selected Gothwad user connect
   expect(await page.evaluate(() => sessionStorage.getItem('gitplus_github_connection'))).not.toContain('gho_late_alice_token');
   expect(errors).toEqual([]);
 });
+
+for (const failure of ['provider', 'html', 'guard'] as const) {
+  test(`OAuth ${failure} failure shows a focused safe diagnostic instead of a generic or hidden error`, async ({ page }) => {
+    const errors = await mockApp(page, () => ({ status: 200, body: account('alice') }));
+    await page.addInitScript(() => sessionStorage.setItem('gitplus_github_oauth_pending', JSON.stringify({ ownerId: 'alice-id', state: 'a'.repeat(43), verifier: 'b'.repeat(43), expires: Date.now() + 600000 })));
+    await page.route(`${ORIGIN}/api/github/complete`, (route) => route.fulfill(failure === 'html'
+      ? { status: 502, contentType: 'text/html', body: '<h1>private-body-must-not-display</h1>' }
+      : { status: failure === 'guard' ? 403 : 400, contentType: 'application/json', body: JSON.stringify({ error: failure === 'guard' ? 'origin_not_allowed' : 'github_client_credentials', providerStatus: failure === 'guard' ? undefined : 401, message: 'private-body-must-not-display' }) }));
+    await page.goto(`${ORIGIN}/?github_oauth=complete&authuser=a`);
+    const alert = page.locator('#github-connection-error');
+    const code = failure === 'provider' ? 'github_client_credentials' : failure === 'html' ? 'response_not_json' : 'origin_not_allowed';
+    await expect(alert).toContainText(`[complete:${code}; HTTP `);
+    await expect(alert).toBeFocused();
+    await expect(alert).toBeInViewport();
+    await expect(alert).not.toContainText('private-body-must-not-display');
+    await expect(page.locator('#pat-input')).toBeEnabled();
+    expect(await page.evaluate(() => sessionStorage.getItem('gitplus_github_connection'))).toBeNull();
+    expect(await page.evaluate(() => sessionStorage.getItem('gitplus_github_oauth_pending'))).toBeNull();
+    expect(page.url()).not.toContain('github_oauth');
+    expect(errors).toEqual([]);
+  });
+}

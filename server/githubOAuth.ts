@@ -1,3 +1,4 @@
+import { OAUTH_ERRORS, type OAuthErrorCode } from '../shared/githubOAuthErrors';
 import { record, validSelector } from '../shared/accounts';
 import { base64url, challengeFor, GITHUB_SCOPES, OAUTH_TTL_SECONDS, randomProof, validProof } from '../shared/githubOAuth';
 import type { SessionEnv } from './accountsSession';
@@ -50,6 +51,13 @@ function callbackRedirect(env: GitHubOAuthEnv, status: 'complete' | 'error', rea
   return new Response(null, { status: 303, headers });
 }
 export async function handleGitHubOAuth(request: Request, env: GitHubOAuthEnv, fetcher: typeof fetch = fetch): Promise<Response> {
+  try { return await oauthRequest(request, env, fetcher); }
+  catch {
+    // Do not leak runtime exception messages (which can contain credentials/URLs).
+    return jsonResponse({ error: 'github_internal_error', message: OAUTH_ERRORS.github_internal_error }, 500, [clearOAuthCookie()]);
+  }
+}
+async function oauthRequest(request: Request, env: GitHubOAuthEnv, fetcher: typeof fetch): Promise<Response> {
   const url = new URL(request.url);
   if (url.origin !== appOrigin(env)) return jsonResponse({ error: 'first_party_domain_required' }, 403);
   if (url.pathname === '/api/github/config' && request.method === 'GET') return jsonResponse({ enabled: configured(env), scopes: GITHUB_SCOPES });
@@ -101,12 +109,31 @@ export async function handleGitHubOAuth(request: Request, env: GitHubOAuthEnv, f
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET, code: txn.code, redirect_uri: `${appOrigin(env)}/api/github/callback`, code_verifier: body.verifier }),
     });
-    if (!response.ok || !response.headers.get('Content-Type')?.includes('application/json')) return jsonResponse({ error: 'github_exchange_failed', message: 'GitHub could not complete authorization. Start a new connection attempt.' }, 502, cookies);
-    const result = record(await response.json());
-    if (!result || result.error || typeof result.access_token !== 'string' || !/^[A-Za-z0-9_-]{10,1024}$/.test(result.access_token) || String(result.token_type).toLowerCase() !== 'bearer') return jsonResponse({ error: 'github_exchange_failed', message: 'GitHub rejected this authorization code. Start a new connection attempt.' }, 400, cookies);
+    const failed = (error: OAuthErrorCode, status = 502) => jsonResponse({ error, message: OAUTH_ERRORS[error], providerStatus: response.status }, status, cookies);
+    // GitHub can report OAuth errors as JSON even with non-2xx statuses. Retain
+    // only known error categories; never relay its description, body or URLs.
+    let result: Record<string, unknown> | null = null;
+    if (response.headers.get('Content-Type')?.toLowerCase().includes('application/json')) {
+      try { result = record(await response.json()); } catch { /* Report a safe category below. */ }
+    }
+    const providerErrors: Record<string, OAuthErrorCode> = {
+      incorrect_client_credentials: 'github_client_credentials',
+      redirect_uri_mismatch: 'github_redirect_mismatch',
+      bad_verification_code: 'github_bad_code',
+      incorrect_code_verifier: 'github_pkce_rejected',
+      unverified_user_email: 'github_email_unverified',
+    };
+    const providerError = result?.error;
+    if (typeof providerError === 'string' && Object.prototype.hasOwnProperty.call(providerErrors, providerError)) return failed(providerErrors[providerError], 400);
+    if (!response.ok) return failed('github_http_error');
+    if (providerError) return failed('github_exchange_rejected', 400);
+    if (!result || typeof result.access_token !== 'string' || !/^[A-Za-z0-9_-]{10,1024}$/.test(result.access_token) || String(result.token_type).toLowerCase() !== 'bearer') return failed('github_invalid_response');
     // Deliberately no offline_access, refresh-token persistence, database or token vault.
     // GitHub itself consumes the code once; frontend single-flight prevents duplicate exchanges.
     return jsonResponse({ token: result.access_token, ownerId: txn.owner, scope: typeof result.scope === 'string' ? result.scope : '' }, 200, cookies);
-  } catch { return jsonResponse({ error: 'github_unavailable', message: 'GitHub authorization timed out or failed. Start again or use a PAT.' }, 502, cookies); }
+  } catch {
+    const error = controller.signal.aborted ? 'github_timeout' : 'github_unavailable';
+    return jsonResponse({ error, message: OAUTH_ERRORS[error] }, 502, cookies);
+  }
   finally { clearTimeout(timer); }
 }
