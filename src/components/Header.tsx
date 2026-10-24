@@ -78,7 +78,7 @@ export const Header: React.FC<HeaderProps> = ({
                 {/* Brand Title */}
                 <div className="flex items-center gap-1.5 min-w-0">
                   <span className="text-xs sm:text-sm font-bold text-[#202124] dark:text-[#e8eaed] tracking-tight truncate">
-                    Gothwad GoGit Repo
+                    GitPlus
                   </span>
                 </div>
 
@@ -106,7 +106,7 @@ export const Header: React.FC<HeaderProps> = ({
                   </div>
                 ) : (
                   <span className="text-xs sm:text-sm font-bold text-[#5f6368] dark:text-[#9aa0a6] tracking-tight">
-                    Developer Studio
+                    by Gothwad Tech
                   </span>
                 )}
 
@@ -202,7 +202,7 @@ export const Header: React.FC<HeaderProps> = ({
             id="header-settings-btn"
             type="button"
             onClick={onOpenSettings}
-            title="Studio Settings"
+            title="GitPlus Settings"
             className="w-9 h-9 flex items-center justify-center bg-[#f8f9fa] dark:bg-[#292a2d] hover:bg-[#f1f3f4] dark:hover:bg-[#303134] text-[#202124] dark:text-[#e8eaed] border border-[#dadce0] dark:border-[#3c4043] rounded-xl transition-colors cursor-pointer"
           >
             <Settings className="w-4 h-4 text-[#5f6368] dark:text-[#9aa0a6] hover:text-[#0494f4] transition-colors" />
@@ -214,7 +214,7 @@ export const Header: React.FC<HeaderProps> = ({
               id="header-logout-btn"
               type="button"
               onClick={onLogout}
-              title="Disconnect PAT"
+              title="Disconnect GitHub"
               className="w-9 h-9 flex items-center justify-center text-[#80868b] hover:text-[#ea4335] hover:bg-[#ea4335]/10 rounded-xl border border-[#dadce0] dark:border-[#3c4043] sm:border-transparent transition-colors cursor-pointer"
             >
               <LogOut className="w-4 h-4" />

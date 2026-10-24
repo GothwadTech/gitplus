@@ -1,5 +1,7 @@
 import JSZip from 'jszip';
 import { ZipExtractedFile } from '../types/github';
+import { normalizeZipPath } from './paths';
+export { normalizeZipPath } from './paths';
 import { computeGitBlobSha, contentToBase64 } from './encoding';
 
 // Known binary extensions
@@ -30,33 +32,20 @@ function isBinarySample(bytes: Uint8Array): boolean {
 }
 
 export interface ZipParseOptions {
+  stripRootFolder?: boolean;
   ignoreNodeModules?: boolean;
   ignoreBuildArtifacts?: boolean;
   onProgress?: (percent: number, currentFile: string, total: number) => void;
-}
-
-/**
- * Normalizes an arbitrary path from a ZIP archive:
- * - Replaces backslashes \ with /
- * - Removes leading / or ./
- * - Collapses duplicate //
- * - Removes trailing /
- */
-export function normalizeZipPath(rawPath: string): string {
-  let p = rawPath.replace(/\\/g, '/').trim();
-  p = p.replace(/^(\.\/)+/, '');
-  p = p.replace(/^\/+/, '');
-  p = p.replace(/\/+/g, '/');
-  p = p.replace(/\/+$/, '');
-  return p;
 }
 
 export async function parseZipArchive(
   file: File | Blob | ArrayBuffer | Uint8Array,
   options: ZipParseOptions = {}
 ): Promise<ZipExtractedFile[]> {
-  const { ignoreNodeModules = true, ignoreBuildArtifacts = true, onProgress } = options;
+  const { stripRootFolder = false, ignoreNodeModules = true, ignoreBuildArtifacts = true, onProgress } = options;
 
+  const inputSize = file instanceof Blob ? file.size : file.byteLength;
+  if (inputSize > 25 * 1024 * 1024) throw new Error('ZIP exceeds the 25 MiB browser upload limit.');
   const zip = new JSZip();
   const loadedZip = await zip.loadAsync(file);
 
@@ -70,6 +59,10 @@ export async function parseZipArchive(
   const rawEntries: RawEntry[] = [];
 
   for (const [rawKey, zipEntry] of Object.entries(loadedZip.files)) {
+    // JSZip sanitizes ../ internally; inspect the original name before using its key.
+    const original = zipEntry.unsafeOriginalName || rawKey;
+    if (original.replace(/\\/g, '/').split('/').some((part) => part.toLowerCase() === '.git')) continue;
+    normalizeZipPath(original);
     const normalized = normalizeZipPath(rawKey);
 
     // Skip directory entries
@@ -123,27 +116,24 @@ export async function parseZipArchive(
     return [];
   }
 
-  // 2. Intelligent root folder wrapper detection (e.g. "my-project-main/" or "folder/")
-  // Automatically strip top-level wrapper folder so files map directly to repo root
-  let currentPrefix = '';
-  let testPaths = rawEntries.map((e) => e.normalizedPath);
+  if (rawEntries.length > 5000) throw new Error('ZIP contains more than 5,000 files. Split the upload.');
 
-  while (testPaths.length > 0) {
-    const firstSlash = testPaths[0].indexOf('/');
-    if (firstSlash <= 0) break;
-    const candidate = testPaths[0].substring(0, firstSlash + 1);
-    const allShare = testPaths.every((p) => p.startsWith(candidate));
-    if (allShare) {
-      currentPrefix += candidate;
-      testPaths = testPaths.map((p) => p.substring(candidate.length));
-    } else {
-      break;
+  // Keep folders by default. Explicit opt-in strips ONE wrapper, never nested source folders.
+  let currentPrefix = '';
+  if (stripRootFolder) {
+    const first = rawEntries[0].normalizedPath;
+    const slash = first.indexOf('/');
+    const candidate = slash > 0 ? first.slice(0, slash + 1) : '';
+    if (candidate && rawEntries.every((entry) => entry.normalizedPath.startsWith(candidate))) {
+      currentPrefix = candidate;
     }
   }
 
   // 3. Extract and calculate Git SHA for each file with progress
   const extractedFiles: ZipExtractedFile[] = [];
   const total = rawEntries.length;
+  let totalBytes = 0;
+  const seenPaths = new Set<string>();
 
   for (let i = 0; i < total; i++) {
     const { normalizedPath, zipEntry } = rawEntries[i];
@@ -155,13 +145,16 @@ export async function parseZipArchive(
 
     cleanPath = normalizeZipPath(cleanPath);
     if (!cleanPath) continue;
+    if (seenPaths.has(cleanPath)) throw new Error(`Duplicate ZIP path: ${cleanPath}`);
+    seenPaths.add(cleanPath);
 
     const fileName = cleanPath.split('/').pop() || cleanPath;
 
     onProgress?.(Math.round(((i + 1) / total) * 100), cleanPath, total);
 
     // Read raw bytes directly to ensure 100% byte fidelity without encoding corruption
-    const rawBytes = await zipEntry.async('uint8array');
+    const rawBytes = await readEntry(zipEntry, 100 * 1024 * 1024 - totalBytes);
+    totalBytes += rawBytes.length;
 
     // Detect whether file is binary
     let isBinaryFile = isBinaryExtension(fileName);
@@ -174,7 +167,7 @@ export async function parseZipArchive(
       content = rawBytes;
     } else {
       try {
-        content = new TextDecoder('utf-8', { fatal: false }).decode(rawBytes);
+        content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(rawBytes);
       } catch {
         content = rawBytes;
         isBinaryFile = true;
@@ -197,4 +190,34 @@ export async function parseZipArchive(
   }
 
   return extractedFiles;
+}
+
+// Stop decompression as soon as an entry or the total expansion budget is exceeded.
+function readEntry(entry: JSZip.JSZipObject, remaining: number): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    // JSZip 3 exposes this API but omits it from JSZipObject's bundled types.
+    const stream = (entry as JSZip.JSZipObject & {
+      internalStream(type: 'uint8array'): JSZip.JSZipStreamHelper<Uint8Array>;
+    }).internalStream('uint8array');
+    stream.on('data', (chunk: Uint8Array) => {
+      size += chunk.length;
+      if (size > Math.min(25 * 1024 * 1024, remaining)) {
+        stream.pause();
+        chunks.length = 0;
+        reject(new Error('ZIP expansion limit exceeded (25 MiB per file, 100 MiB total).'));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    stream.on('error', reject);
+    stream.on('end', () => {
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+      resolve(bytes);
+    });
+    stream.resume();
+  });
 }

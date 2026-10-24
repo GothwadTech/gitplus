@@ -313,7 +313,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
           className="flex items-center gap-1.5 px-4 py-2 bg-[#ea4335] hover:bg-[#d93025] text-white text-xs font-bold rounded-xl shadow-sm transition shrink-0"
         >
           <LogOut className="w-3.5 h-3.5" />
-          <span>Disconnect / Logout</span>
+          <span>Disconnect GitHub</span>
         </button>
       </div>
     </div>

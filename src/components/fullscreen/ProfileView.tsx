@@ -643,7 +643,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             className="flex items-center gap-1.5 px-4 py-2.5 bg-[#ea4335] hover:bg-[#d93025] active:scale-95 text-white text-xs font-bold rounded-2xl shadow-xs transition cursor-pointer shrink-0"
           >
             <LogOut className="w-3.5 h-3.5" />
-            <span>Disconnect & Sign Out</span>
+            <span>Disconnect GitHub</span>
           </button>
         </div>
       </main>

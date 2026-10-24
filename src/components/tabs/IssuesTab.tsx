@@ -126,15 +126,15 @@ export const IssuesTab: React.FC<IssuesTabProps> = ({
             </label>
             <select
               id="issues-repo-select"
-              value={selectedRepo ? selectedRepo.name : ''}
+              value={selectedRepo ? selectedRepo.full_name : ''}
               onChange={(e) => {
-                const target = repos.find((r) => r.name === e.target.value);
+                const target = repos.find((r) => r.full_name === e.target.value);
                 if (target) onSelectRepo(target);
               }}
               className="w-full bg-[#f8f9fa] dark:bg-[#202124] border border-[#dadce0] dark:border-[#3c4043] rounded-xl px-3 py-1.5 text-xs sm:text-sm font-semibold text-[#202124] dark:text-[#e8eaed] focus:outline-none focus:border-[#0494f4]"
             >
               {repos.map((r) => (
-                <option key={r.id} value={r.name}>
+                <option key={r.id} value={r.full_name}>
                   {r.name}
                 </option>
               ))}

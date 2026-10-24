@@ -49,14 +49,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
   };
 
   const handleClearAppCache = () => {
-    if (confirm('Clear local repository tree cache? Your GitHub PAT login will remain safe.')) {
-      // Clear non-token items
-      const pat = safeStorage.getItem('gothwad_github_pat');
-      const themeVal = safeStorage.getItem('gothwad_github_theme');
-      safeStorage.clear();
-      if (pat) safeStorage.setItem('gothwad_github_pat', pat);
-      if (themeVal) safeStorage.setItem('gothwad_github_theme', themeVal);
-      alert('Local tree cache cleared successfully!');
+    if (confirm('Reset editor preferences? Your login and theme will not change.')) {
+      ['gogit_editor_font', 'gogit_tab_size', 'gogit_word_wrap', 'gogit_default_branch'].forEach((key) => safeStorage.removeItem(key));
+      setEditorFont('JetBrains Mono');
+      setTabSize(2);
+      setWordWrap(true);
+      setDefaultBranch('main');
+      setSavedBanner(true);
     }
   };
 
@@ -291,10 +290,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
             </div>
             <div>
               <h3 className="text-sm sm:text-base font-bold text-[#202124] dark:text-[#e8eaed]">
-                Data Cache & Storage
+                Local Preferences
               </h3>
               <p className="text-xs text-[#5f6368] dark:text-[#9aa0a6]">
-                Manage browser local storage cache and tree sessions
+                Manage preferences saved in this browser
               </p>
             </div>
           </div>
@@ -302,10 +301,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3.5 bg-[#f8f9fa] dark:bg-[#202124] border border-[#dadce0] dark:border-[#3c4043] rounded-2xl">
             <div>
               <h4 className="text-xs font-bold text-[#202124] dark:text-[#e8eaed]">
-                Clear Tree & File Cache
+                Reset Editor Preferences
               </h4>
               <p className="text-[11px] text-[#5f6368] dark:text-[#9aa0a6]">
-                Forces fresh fetch from GitHub REST API on next repo view.
+                Restore editor defaults without clearing your login, theme or other site data.
               </p>
             </div>
 
@@ -315,22 +314,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
               className="flex items-center gap-1.5 px-3.5 py-2 bg-[#f1f3f4] dark:bg-[#303134] hover:bg-[#e8eaed] dark:hover:bg-[#3c4043] text-[#202124] dark:text-[#e8eaed] text-xs font-bold rounded-xl border border-[#dadce0] dark:border-[#3c4043] transition cursor-pointer shrink-0"
             >
               <RotateCcw className="w-3.5 h-3.5 text-[#0494f4]" />
-              <span>Clear Cache</span>
+              <span>Reset Preferences</span>
             </button>
           </div>
         </div>
 
-        {/* 4. About Gothwad GoGit */}
+        {/* 4. About GitPlus */}
         <div className="bg-white dark:bg-[#292a2d] border border-[#dadce0] dark:border-[#3c4043] rounded-3xl p-6 shadow-sm space-y-3 transition-colors duration-200 text-xs">
           <div className="flex items-center gap-2">
             <Info className="w-4 h-4 text-[#0494f4]" />
-            <h3 className="font-bold text-[#202124] dark:text-[#e8eaed]">About Gothwad GoGit Studio</h3>
+            <h3 className="font-bold text-[#202124] dark:text-[#e8eaed]">About GitPlus</h3>
           </div>
           <p className="text-[#5f6368] dark:text-[#9aa0a6] leading-relaxed">
-            Full-featured GitHub mobile & web workspace. Provides instantaneous atomic ZIP code synchronization, commit time-travel diffing, Actions CI/CD workflows, releases publisher, issues manager, and gists engine.
+            GitPlus is a Gothwad Tech product: a GitHub mobile and web workspace. Provides instantaneous atomic ZIP code synchronization, commit time-travel diffing, Actions CI/CD workflows, releases publisher, issues manager, and gists engine.
           </p>
           <div className="pt-2 flex items-center justify-between text-[11px] text-[#80868b] border-t border-[#dadce0] dark:border-[#3c4043]">
-            <span>Version 3.5.0-production</span>
+            <span>GitPlus · Gothwad Tech</span>
             <span>REST API v3 / 2022-11-28</span>
           </div>
         </div>
