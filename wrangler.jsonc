@@ -1,0 +1,9 @@
+{
+  "name": "gitplus",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-10-24",
+  "vars": {
+    "GITPLUS_ORIGIN": "https://gitplus.gothwadtech.com",
+    "ACCOUNTS_API_ORIGIN": "https://api.gothwadtech.com"
+  }
+}

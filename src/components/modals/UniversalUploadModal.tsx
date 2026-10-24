@@ -50,6 +50,7 @@ export const UniversalUploadModal: React.FC<UniversalUploadModalProps> = ({
   branches,
   onUploadSuccess,
 }) => {
+  const [stripRootFolder, setStripRootFolder] = useState(false);
   const [activeMode, setActiveMode] = useState<UploadMode>('bulk_files');
   const [selectedBranch, setSelectedBranch] = useState(currentBranch || repo.default_branch || 'main');
   const [commitMessage, setCommitMessage] = useState('');
@@ -203,6 +204,7 @@ export const UniversalUploadModal: React.FC<UniversalUploadModalProps> = ({
 
     try {
       const extractedFiles = await parseZipArchive(file, {
+        stripRootFolder,
         ignoreNodeModules,
         onProgress: (percent, currentFile, total) => {
           setProgress({
@@ -547,6 +549,11 @@ export const UniversalUploadModal: React.FC<UniversalUploadModalProps> = ({
               </div>
             )}
 
+            {activeMode === 'zip' && (<label className="flex items-center gap-2 text-xs py-2">
+                  <input type="checkbox" checked={stripRootFolder} onChange={(e) => setStripRootFolder(e.target.checked)} />
+                  Remove one outer folder from the next ZIP (e.g. repo-main/)
+                </label>
+                )}
             {/* Mode 3: ZIP Unpack */}
             {activeMode === 'zip' && (
               <div className="space-y-3">
@@ -582,7 +589,7 @@ export const UniversalUploadModal: React.FC<UniversalUploadModalProps> = ({
                     Upload & Unpack .ZIP Archive
                   </h4>
                   <p className="text-[11px] text-[#5f6368] dark:text-[#9aa0a6] mt-0.5">
-                    Drag & drop .zip here or click to browse. Automatic root folder detection & Git hash comparison.
+                    Drag & drop .zip here or click to browse. Folder paths are preserved unless you enable wrapper removal.
                   </p>
                 </div>
 

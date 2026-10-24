@@ -21,36 +21,41 @@ import { GitHubUser } from '../types/github';
 import { useTheme } from '../context/ThemeContext';
 
 interface AuthScreenProps {
+  initialError?: string | null;
   onSuccess: (user: GitHubUser) => void;
 }
 
-export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
+export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess, initialError }) => {
   const { theme, setTheme, isDark } = useTheme();
   const [tokenInput, setTokenInput] = useState('');
   const [showToken, setShowToken] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError || null);
   const [showGuide, setShowGuide] = useState(false);
 
-  // Pre-configured GitHub PAT creation link with all essential scopes for full access
+  // Prefer repository-scoped, expiring tokens instead of broad classic admin scopes.
   const githubPatUrl =
-    'https://github.com/settings/tokens/new?description=Gothwad%20GoGit%20Full%20Access&scopes=repo,workflow,write:packages,delete_repo,admin:org,admin:public_key,admin:repo_hook,user,project,gist,codespace';
+    'https://github.com/settings/personal-access-tokens/new';
 
   const handleConnect = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const token = tokenInput.trim();
     if (!token) {
-      setError('Please paste or enter your GitHub Personal Access Token (PAT).');
+      setError('Please paste or enter your GitHub GitHub Personal Access Token (PAT).');
       return;
     }
 
+    let attempt = githubService.getGeneration();
     try {
       setLoading(true);
       setError(null);
       githubService.setToken(token);
+      attempt = githubService.getGeneration();
       const user = await githubService.getAuthenticatedUser();
+      setTokenInput('');
       onSuccess(user);
     } catch (err: unknown) {
+      if (githubService.getGeneration() !== attempt) return;
       setError(
         err instanceof Error
           ? err.message
@@ -124,16 +129,19 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
           </div>
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#202124] dark:text-[#e8eaed]">
-              Gothwad GoGit
+              GitPlus
             </h1>
             <p className="text-xs sm:text-sm text-[#5f6368] dark:text-[#9aa0a6] mt-1 max-w-md mx-auto">
-              Mobile GitHub Studio: Full Repository Manager, In-Browser Code Editor & ZIP Codebase Sync Engine
+              A Gothwad Tech product · Connect GitHub to browse repositories, edit code and sync ZIP files.
             </p>
           </div>
         </div>
 
         {/* Auth Card */}
         <div className="bg-white dark:bg-[#292a2d] border border-[#dadce0] dark:border-[#3c4043] rounded-3xl p-6 sm:p-7 shadow-sm space-y-5 transition-colors duration-200">
+          <p className="text-sm text-[#5f6368] dark:text-[#9aa0a6]">
+            You are signed in with Gothwad Accounts. GitHub access is a separate connection; your Gothwad password is never requested here.
+          </p>
           {/* Quick Create Token Link Banner */}
           <div className="bg-[#f1f3f4] dark:bg-[#303134] border border-[#dadce0] dark:border-[#3c4043] rounded-2xl p-4 space-y-3">
             <div className="flex items-start gap-3">
@@ -142,10 +150,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
               </div>
               <div className="min-w-0 flex-1">
                 <h2 className="text-sm font-bold text-[#202124] dark:text-[#e8eaed] flex items-center gap-1.5">
-                  1-Click Full-Access PAT Creator
+                  Connect with a scoped GitHub token
                 </h2>
                 <p className="text-xs text-[#5f6368] dark:text-[#9aa0a6] mt-0.5 leading-relaxed">
-                  Need a token? Click below to open GitHub with all essential permissions (<code className="text-[#0494f4]">repo</code>, <code className="text-[#0494f4]">delete_repo</code>, <code className="text-[#0494f4]">workflow</code>, <code className="text-[#0494f4]">gist</code>, <code className="text-[#0494f4]">user</code>) pre-selected!
+                  Create a fine-grained token for only the repositories you need. Start with read access; grant write permissions only for features you use. Set a short expiry.
                 </p>
               </div>
             </div>
@@ -157,7 +165,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
               rel="noreferrer"
               className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-[#0494f4] hover:bg-[#0382d6] text-white text-xs font-bold rounded-xl shadow-sm transition active:scale-98"
             >
-              <span>Generate Full-Access Token on GitHub</span>
+              <span>Create a Token on GitHub</span>
               <ExternalLink className="w-3.5 h-3.5" />
             </a>
           </div>
@@ -168,7 +176,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
               <div className="flex items-center justify-between">
                 <label htmlFor="pat-input" className="text-xs font-semibold text-[#202124] dark:text-[#e8eaed] flex items-center gap-1.5">
                   <Key className="w-3.5 h-3.5 text-[#0494f4]" />
-                  Personal Access Token (PAT)
+                  GitHub Personal Access Token (PAT)
                 </label>
                 <button
                   type="button"
@@ -195,6 +203,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
                 />
                 <button
                   type="button"
+                  aria-label={showToken ? 'Hide token' : 'Show token'}
                   onClick={() => setShowToken(!showToken)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-[#5f6368] dark:text-[#9aa0a6] hover:text-[#202124] dark:hover:text-[#e8eaed] transition"
                 >
@@ -223,7 +232,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
                 </>
               ) : (
                 <>
-                  <span>Connect to GitHub</span>
+                  <span>Connect GitHub</span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}
@@ -234,7 +243,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
           <div className="pt-2 border-t border-[#dadce0] dark:border-[#3c4043] flex items-center justify-between text-[11px] text-[#5f6368] dark:text-[#9aa0a6]">
             <div className="flex items-center gap-1.5">
               <Lock className="w-3.5 h-3.5 text-[#34a853]" />
-              <span>Token stays client-side in browser storage</span>
+              <span>GitHub connection is scoped to this Gothwad account and tab.</span>
             </div>
             <button
               type="button"
@@ -256,16 +265,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
             </h3>
             <ol className="list-decimal pl-4 space-y-2 leading-relaxed">
               <li>
-                Click on the <span className="text-[#0494f4] font-semibold">"Generate Full-Access Token on GitHub"</span> button above.
+                Click on the <span className="text-[#0494f4] font-semibold">"Create a Token on GitHub"</span> button above.
               </li>
               <li>
-                GitHub will open with all permissions checked (<code>repo</code>, <code>delete_repo</code>, <code>workflow</code>, <code>gist</code>, <code>user</code>).
+                Choose a resource owner, selected repositories and an expiry. Contents, Issues, Pull requests and Actions permissions depend on the features you use.
               </li>
               <li>
                 Scroll down to the bottom of the GitHub page and click the green <strong className="text-[#34a853]">"Generate token"</strong> button.
               </li>
               <li>
-                Copy the generated token string (starts with <code className="text-[#0494f4]">ghp_</code>) and paste it in the box above.
+                Copy the generated token string (starts with <code className="text-[#0494f4]">github_pat_</code> or <code>ghp_</code>) and paste it in the box above.
               </li>
             </ol>
             <div className="mt-2 p-2.5 bg-[#f1f3f4] dark:bg-[#303134] rounded-xl border border-[#dadce0] dark:border-[#3c4043] text-[11px]">

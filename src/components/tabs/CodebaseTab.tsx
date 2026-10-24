@@ -64,6 +64,7 @@ export const CodebaseTab: React.FC<CodebaseTabProps> = ({
   initialSubTab = 'explorer',
 }) => {
   // Sub-Navigation Mode
+  const [stripRootFolder, setStripRootFolder] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<CodebaseSubTab>(initialSubTab);
 
   // Time-Travel State
@@ -74,7 +75,9 @@ export const CodebaseTab: React.FC<CodebaseTabProps> = ({
   const [selectedBranch, setSelectedBranch] = useState<string>('');
   const [currentPath, setCurrentPath] = useState<string>('');
   const [treeItems, setTreeItems] = useState<GitHubTreeItem[]>([]);
-  const [loadingTree, setLoadingTree] = useState(false);
+  const [loadingTree, setLoadingTree] = useState(true);
+  const [treeError, setTreeError] = useState<string | null>(null);
+  const treeRequest = useRef(0);
 
   // Active File Viewing/Editing
   const [activeFile, setActiveFile] = useState<{
@@ -133,23 +136,30 @@ export const CodebaseTab: React.FC<CodebaseTabProps> = ({
       if (branchList.length > 0) {
         const defaultB = branchList.find((b) => b.name === repo.default_branch) || branchList[0];
         setSelectedBranch(defaultB.name);
+      } else {
+        setSelectedBranch(repo.default_branch || 'main');
       }
     } catch (err: unknown) {
-      console.error('Failed to load branches:', err);
+      setTreeError(err instanceof Error ? err.message : 'Failed to load branches.');
+      setLoadingTree(false);
     }
   };
 
   const loadTree = async (repo: GitHubRepo, branchName: string) => {
+    const requestId = ++treeRequest.current;
+    setLoadingTree(true);
+    setTreeError(null);
+    setTreeItems([]);
+    setZipFiles([]);
+    setZipDiffList([]);
     try {
-      setLoadingTree(true);
-      const branchObj = branches.find((b) => b.name === branchName);
-      const commitSha = branchObj?.commit.sha || branchName;
-      const items = await githubService.getTree(repo.owner.login, repo.name, commitSha, true);
-      setTreeItems(items);
+      // Resolve the live branch, not the stale SHA captured when branches first loaded.
+      const items = await githubService.getTree(repo.owner.login, repo.name, branchName, true);
+      if (requestId === treeRequest.current) setTreeItems(items);
     } catch (err: unknown) {
-      console.error('Failed to load repo tree:', err);
+      if (requestId === treeRequest.current) setTreeError(err instanceof Error ? err.message : 'Failed to load repository tree.');
     } finally {
-      setLoadingTree(false);
+      if (requestId === treeRequest.current) setLoadingTree(false);
     }
   };
 
@@ -276,6 +286,12 @@ export const CodebaseTab: React.FC<CodebaseTabProps> = ({
   // ZIP Upload & Diff Handling
   const processZipFile = async (file: File) => {
     if (!selectedRepo) return;
+    if (loadingTree || treeError || timeTravelSha) {
+      setZipError('Load a complete live branch tree before comparing a ZIP.');
+      return;
+    }
+    setZipFiles([]);
+    setZipDiffList([]);
     setZipError(null);
     setIsParsingZip(true);
     setShowZipSyncPanel(true);
@@ -283,6 +299,7 @@ export const CodebaseTab: React.FC<CodebaseTabProps> = ({
 
     try {
       const parsedFiles = await parseZipArchive(file, {
+        stripRootFolder,
         ignoreNodeModules: zipIgnoreNodeModules,
         onProgress: (percent, currentFile, total) => {
           setZipExtractProgress({ percent, currentFile, total });
@@ -423,6 +440,10 @@ export const CodebaseTab: React.FC<CodebaseTabProps> = ({
   // Perform Atomic Batch Sync to GitHub (Uploads + Deletions)
   const handleExecuteBatchSync = async () => {
     if (!selectedRepo || !selectedBranch) return;
+    if (loadingTree || treeError || timeTravelSha) {
+      setZipError('Load a complete live branch tree before syncing.');
+      return;
+    }
     setZipError(null);
 
     const filesToUpload = zipDiffList
@@ -442,6 +463,8 @@ export const CodebaseTab: React.FC<CodebaseTabProps> = ({
       setZipError('Please select at least one file to upload or delete.');
       return;
     }
+
+    if (filesToDelete.length > 0 && !confirm(`Delete ${filesToDelete.length} file(s) from ${selectedRepo.full_name} on ${selectedBranch}? Review the selected paths before continuing.`)) return;
 
     try {
       setIsCommittingBatch(true);
@@ -501,6 +524,9 @@ export const CodebaseTab: React.FC<CodebaseTabProps> = ({
 
   return (
     <div className="space-y-4 pb-20 max-w-5xl mx-auto">
+      {treeError && <div role="alert" className="rounded-xl border border-red-400 p-3 text-sm">
+        {treeError} <button className="underline ml-2" onClick={() => selectedRepo && loadBranches(selectedRepo).then(() => loadTree(selectedRepo, selectedBranch || selectedRepo.default_branch))}>Retry</button>
+      </div>}
       {/* Hidden File Input for ZIP */}
       <input
         ref={fileInputRef}
@@ -524,16 +550,16 @@ export const CodebaseTab: React.FC<CodebaseTabProps> = ({
               </label>
               <select
                 id="codebase-repo-select"
-                value={selectedRepo ? selectedRepo.name : ''}
+                value={selectedRepo ? selectedRepo.full_name : ''}
                 onChange={(e) => {
-                  const target = repos.find((r) => r.name === e.target.value);
+                  const target = repos.find((r) => r.full_name === e.target.value);
                   if (target) onSelectRepo(target);
                 }}
                 className="w-full bg-[#f8f9fa] dark:bg-[#202124] border border-[#dadce0] dark:border-[#3c4043] rounded-xl px-3 py-1.5 text-xs sm:text-sm font-semibold text-[#202124] dark:text-[#e8eaed] focus:outline-none focus:border-[#0494f4]"
               >
                 {repos.map((r) => (
-                  <option key={r.id} value={r.name}>
-                    {r.name} {r.private ? '🔒' : ''}
+                  <option key={r.id} value={r.full_name}>
+                    {r.full_name} {r.private ? '🔒' : ''}
                   </option>
                 ))}
               </select>
@@ -781,7 +807,7 @@ export const CodebaseTab: React.FC<CodebaseTabProps> = ({
                   <p className="text-xs text-[#5f6368] dark:text-[#9aa0a6] mt-1">
                     {zipFiles.length > 0
                       ? `Extracted ${zipFiles.length} files locally with exact Git Blob SHA hashing. Compare with repository codebase and select files to sync or clean.`
-                      : 'Decompress any project archive in-browser, auto-strip common root folders, and compare against GitHub.'}
+                      : 'Decompress any project archive in-browser, preserve folder paths, and compare against GitHub.'}
                   </p>
                 </div>
 
@@ -852,6 +878,11 @@ export const CodebaseTab: React.FC<CodebaseTabProps> = ({
               )}
 
               {/* If no ZIP loaded yet: Show interactive drop zone */}
+              <label className="flex items-center gap-2 text-xs py-2">
+                  <input type="checkbox" checked={stripRootFolder} onChange={(e) => setStripRootFolder(e.target.checked)} />
+                  Remove one outer folder from the next ZIP (e.g. repo-main/)
+                </label>
+
               {zipFiles.length === 0 && !isParsingZip && (
                 <div className="space-y-3">
                   <div

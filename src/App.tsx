@@ -1,20 +1,24 @@
-import React, { useState, useEffect } from 'react';
-import { githubService } from './services/github';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
+import { GitHubApiError, githubService } from './services/github';
 import { GitHubUser, GitHubRepo, GitHubRateLimit } from './types/github';
 import { AuthScreen } from './components/AuthScreen';
 import { Header } from './components/Header';
 import { BottomNav, TabType } from './components/BottomNav';
 import { ReposTab } from './components/tabs/ReposTab';
-import { CodebaseTab, CodebaseSubTab } from './components/tabs/CodebaseTab';
-import { PullsTab } from './components/tabs/PullsTab';
-import { IssuesTab } from './components/tabs/IssuesTab';
-import { ExploreTab } from './components/tabs/ExploreTab';
-import { ProfileView } from './components/fullscreen/ProfileView';
-import { SettingsView } from './components/fullscreen/SettingsView';
+import type { CodebaseSubTab } from './components/tabs/CodebaseTab';
+const CodebaseTab = lazy(() => import('./components/tabs/CodebaseTab').then((m) => ({ default: m.CodebaseTab })));
+const PullsTab = lazy(() => import('./components/tabs/PullsTab').then((m) => ({ default: m.PullsTab })));
+const IssuesTab = lazy(() => import('./components/tabs/IssuesTab').then((m) => ({ default: m.IssuesTab })));
+const ExploreTab = lazy(() => import('./components/tabs/ExploreTab').then((m) => ({ default: m.ExploreTab })));
+const ProfileView = lazy(() => import('./components/fullscreen/ProfileView').then((m) => ({ default: m.ProfileView })));
+const SettingsView = lazy(() => import('./components/fullscreen/SettingsView').then((m) => ({ default: m.SettingsView })));
 import { ThemeProvider } from './context/ThemeContext';
+import { AccountsProvider, useAccounts } from './context/AccountsContext';
+import { AccountsBar, AccountsGate } from './components/accounts/AccountsGate';
 
 function MainApp() {
   const [user, setUser] = useState<GitHubUser | null>(null);
+  const [appError, setAppError] = useState<string | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [activeTab, setActiveTab] = useState<TabType>('repos');
   const [codebaseSubTab, setCodebaseSubTab] = useState<CodebaseSubTab>('explorer');
@@ -48,9 +52,9 @@ function MainApp() {
       const userData = await githubService.getAuthenticatedUser();
       setUser(userData);
       await loadInitialData();
-    } catch {
-      // Invalid or expired token
-      githubService.setToken('');
+    } catch (error) {
+      if (error instanceof GitHubApiError && error.status === 401) githubService.setToken('');
+      setAppError(error instanceof Error ? error.message : 'Could not connect to GitHub. Try again.');
       setUser(null);
     } finally {
       setLoadingAuth(false);
@@ -59,6 +63,7 @@ function MainApp() {
 
   const loadInitialData = async () => {
     try {
+      setAppError(null);
       setLoadingRepos(true);
       const [repoList, limitData] = await Promise.all([
         githubService.getUserRepos({ per_page: 100, sort: 'updated' }),
@@ -75,7 +80,7 @@ function MainApp() {
         setSelectedRepo(repoList[0]);
       }
     } catch (err) {
-      console.error('Failed to load initial data:', err);
+      setAppError(err instanceof Error ? err.message : 'Failed to load repositories. Please retry.');
     } finally {
       setLoadingRepos(false);
     }
@@ -84,6 +89,7 @@ function MainApp() {
   const handleRefresh = async () => {
     if (!user) return;
     try {
+      setAppError(null);
       setIsRefreshing(true);
       const [userData, repoList, limitData] = await Promise.all([
         githubService.getAuthenticatedUser(),
@@ -101,7 +107,7 @@ function MainApp() {
         if (updated) setSelectedRepo(updated);
       }
     } catch (err) {
-      console.error('Refresh error:', err);
+      setAppError(err instanceof Error ? err.message : 'Refresh failed. Please retry.');
     } finally {
       setIsRefreshing(false);
     }
@@ -110,6 +116,8 @@ function MainApp() {
   const handleLogout = () => {
     githubService.setToken('');
     setUser(null);
+    setRateLimit(null);
+    setAppError(null);
     setRepos([]);
     setSelectedRepo(null);
     setActiveTab('repos');
@@ -150,7 +158,7 @@ function MainApp() {
       <div className="min-h-screen bg-[#f8f9fa] dark:bg-[#202124] flex flex-col items-center justify-center p-4 space-y-3 transition-colors duration-200">
         <div className="w-10 h-10 border-3 border-[#0494f4]/20 border-t-[#0494f4] rounded-full animate-spin" />
         <p className="text-xs text-[#5f6368] dark:text-[#9aa0a6] font-medium tracking-wide">
-          Connecting to GitHub Studio...
+          Connecting to GitPlus...
         </p>
       </div>
     );
@@ -160,6 +168,7 @@ function MainApp() {
   if (!user) {
     return (
       <AuthScreen
+        initialError={appError}
         onSuccess={(authenticatedUser) => {
           setUser(authenticatedUser);
           loadInitialData();
@@ -187,6 +196,11 @@ function MainApp() {
 
       {/* Main Tab Screen Area (6 Top-level tabs) */}
       <main className="flex-1 px-3 sm:px-5 pt-3 pb-20 sm:pb-24 max-w-7xl w-full mx-auto">
+        {appError && (
+          <div role="alert" className="mb-3 rounded-xl border border-red-400 p-3 text-sm">
+            {appError} <button type="button" className="underline ml-2" onClick={handleRefresh}>Retry</button>
+          </div>
+        )}
         {activeTab === 'repos' && (
           <ReposTab
             repos={repos}
@@ -200,6 +214,7 @@ function MainApp() {
 
         {activeTab === 'codebase' && (
           <CodebaseTab
+            key={selectedRepo?.id}
             repos={repos}
             selectedRepo={selectedRepo}
             onSelectRepo={(r) => setSelectedRepo(r)}
@@ -280,10 +295,22 @@ function MainApp() {
   );
 }
 
+function AccountWorkspace() {
+  const { state } = useAccounts();
+  if (state.status !== 'authenticated') return null;
+  return <><AccountsBar /><MainApp key={state.user.id} /></>;
+}
+
 export default function App() {
   return (
     <ThemeProvider>
-      <MainApp />
+      <AccountsProvider>
+        <AccountsGate>
+          <Suspense fallback={<div role="status" className="p-8 text-center">Loading GitPlus…</div>}>
+            <AccountWorkspace />
+          </Suspense>
+        </AccountsGate>
+      </AccountsProvider>
     </ThemeProvider>
   );
 }

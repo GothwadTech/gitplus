@@ -1,6 +1,6 @@
 {
-  "name": "Gothwad GoGit",
-  "description": "Mobile-first full GitHub client with PAT authentication, repository management, code editor, and ZIP sync engine.",
+  "name": "GitPlus",
+  "description": "GitPlus is a Gothwad Tech product with Gothwad Accounts sign-in, a separate GitHub connection, code editing and ZIP sync.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "publisher": "Gothwad Tech"
 }

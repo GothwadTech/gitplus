@@ -18,33 +18,60 @@ import {
   GitHubRelease,
   GitHubTag,
 } from '../types/github';
-import { safeStorage } from '../utils/safeStorage';
+import { tokenStorage } from '../utils/tokenStorage';
+import { normalizeZipPath } from '../utils/paths';
 import { contentToBase64, formatBytes } from '../utils/encoding';
 
 const GITHUB_API_BASE = 'https://api.github.com';
 
-class GitHubService {
+export class GitHubApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = 'GitHubApiError';
+  }
+}
+
+export class GitHubService {
   private token: string = '';
   private userScopes: string[] = [];
 
-  constructor() {
-    const savedToken = safeStorage.getItem('gothwad_github_pat');
-    if (savedToken) {
-      this.token = savedToken.trim();
-    }
+  private accountId: string | null = null;
+  private epoch = 0;
+  private sessionAbort = new AbortController();
+  private accessPaused = false;
+
+  public getGeneration() { return this.epoch; }
+
+  private invalidateRequests() {
+    this.epoch++;
+    this.sessionAbort.abort();
+    this.sessionAbort = new AbortController();
+  }
+
+  public bindAccount(userId: string | null) {
+    if (userId !== null && this.accountId === userId && !this.accessPaused) return;
+    this.invalidateRequests();
+    this.accountId = userId;
+    this.accessPaused = false;
+    this.userScopes = [];
+    tokenStorage.bindOwner(userId);
+    this.token = tokenStorage.get();
+  }
+
+  public pauseAccess() {
+    this.accessPaused = true;
+    this.invalidateRequests();
+  }
+
+  private assertGeneration(epoch: number) {
+    if (this.accessPaused || epoch !== this.epoch) throw new DOMException('Account connection changed. Operation cancelled.', 'AbortError');
   }
 
   public setToken(token: string) {
+    this.invalidateRequests();
     this.token = token.trim();
-    if (this.token) {
-      safeStorage.setItem('gothwad_github_pat', this.token);
-    } else {
-      safeStorage.removeItem('gothwad_github_pat');
-    }
-  }
-
-  public getToken(): string {
-    return this.token;
+    this.userScopes = [];
+    tokenStorage.set(this.token);
   }
 
   public hasToken(): boolean {
@@ -67,15 +94,22 @@ class GitHubService {
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const url = endpoint.startsWith('http') ? endpoint : `${GITHUB_API_BASE}${endpoint}`;
+    const url = new URL(endpoint, GITHUB_API_BASE);
+    if (url.origin !== GITHUB_API_BASE) {
+      throw new Error('Refusing to send credentials outside the GitHub API.');
+    }
+    const epoch = this.epoch;
+    this.assertGeneration(epoch);
     const response = await fetch(url, {
       ...options,
+      signal: this.sessionAbort.signal,
       headers: {
         ...this.getHeaders(),
         ...(options.headers || {}),
       },
     });
 
+    this.assertGeneration(epoch);
     const scopesHeader = response.headers.get('x-oauth-scopes');
     if (scopesHeader) {
       this.userScopes = scopesHeader.split(',').map((s) => s.trim());
@@ -97,14 +131,17 @@ class GitHubService {
       } catch {
         // use fallback errorMsg
       }
-      throw new Error(errorMsg);
+      this.assertGeneration(epoch);
+      throw new GitHubApiError(errorMsg, response.status);
     }
 
     if (response.status === 204) {
       return {} as T;
     }
 
-    return response.json() as Promise<T>;
+    const data = await response.json() as T;
+    this.assertGeneration(epoch);
+    return data;
   }
 
   // 1. User & Auth
@@ -137,7 +174,17 @@ class GitHubService {
       visibility: params?.visibility || 'all',
       affiliation: params?.affiliation || 'owner,collaborator,organization_member',
     });
-    return this.request<GitHubRepo[]>(`/user/repos?${query.toString()}`);
+    if (params?.page) return this.request<GitHubRepo[]>(`/user/repos?${query}`);
+    const epoch = this.epoch;
+    const repos: GitHubRepo[] = [];
+    for (let page = 1; ; page++) {
+      this.assertGeneration(epoch);
+      query.set('page', String(page));
+      const batch = await this.request<GitHubRepo[]>(`/user/repos?${query}`);
+      repos.push(...batch);
+      if (batch.length < Number(query.get('per_page'))) break;
+    }
+    return repos;
   }
 
   public async getRepo(owner: string, repo: string): Promise<GitHubRepo> {
@@ -190,8 +237,9 @@ class GitHubService {
   }
 
   public async getTree(owner: string, repo: string, treeSha: string, recursive: boolean = true): Promise<GitHubTreeItem[]> {
-    const url = `/repos/${owner}/${repo}/git/trees/${treeSha}${recursive ? '?recursive=1' : ''}`;
+    const url = `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(treeSha)}${recursive ? '?recursive=1' : ''}`;
     const res = await this.request<{ sha: string; tree: GitHubTreeItem[]; truncated: boolean }>(url);
+    if (res.truncated) throw new Error('Repository tree is too large to load completely. ZIP sync is disabled to prevent incomplete comparisons.');
     return res.tree || [];
   }
 
@@ -202,10 +250,10 @@ class GitHubService {
     path: string,
     ref?: string
   ): Promise<{ content: string; sha: string; size: number; isBinary: boolean; rawUrl?: string }> {
-    const url = `/repos/${owner}/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}${ref ? `?ref=${ref}` : ''}`;
+    const url = `/repos/${owner}/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`;
     const res = await this.request<GitHubFileContent>(url);
 
-    if (res.type !== 'file' || !res.content) {
+    if (res.type !== 'file' || (res.size > 0 && !res.content)) {
       return {
         content: '',
         sha: res.sha,
@@ -217,7 +265,7 @@ class GitHubService {
 
     try {
       // Decode base64 UTF-8 safely
-      const cleanBase64 = res.content.replace(/\s/g, '');
+      const cleanBase64 = (res.content || '').replace(/\s/g, '');
       const binaryString = atob(cleanBase64);
       const bytes = new Uint8Array(binaryString.length);
       for (let i = 0; i < binaryString.length; i++) {
@@ -235,7 +283,7 @@ class GitHubService {
     } catch {
       // Binary or non UTF-8 file
       return {
-        content: res.content,
+        content: res.content || '',
         sha: res.sha,
         size: res.size,
         isBinary: true,
@@ -307,14 +355,9 @@ class GitHubService {
     deletedPaths: string[] = [],
     onProgress?: (progress: BatchCommitProgress) => void
   ): Promise<BatchCommitResult> {
-    const sanitizeGitPath = (rawPath: string): string => {
-      let p = rawPath.replace(/\\/g, '/').trim();
-      p = p.replace(/^(\.\/)+/, '');
-      p = p.replace(/^\/+/, '');
-      p = p.replace(/\/+/g, '/');
-      p = p.replace(/\/+$/, '');
-      return p;
-    };
+    const batchEpoch = this.epoch;
+    this.assertGeneration(batchEpoch);
+    const sanitizeGitPath = normalizeZipPath;
 
     // Sanitize and deduplicate file entries by path
     const fileMap = new Map<string, { path: string; content: string | Uint8Array; isBinary?: boolean; existingSha?: string }>();
@@ -349,34 +392,27 @@ class GitHubService {
       message: `Inspecting branch '${branch}' on ${owner}/${repo}...`,
     });
 
-    // 1. Get branch reference and latest commit SHA (handles empty repos gracefully)
-    let latestCommitSha: string | null = null;
-    let baseTreeSha: string | null = null;
-
+    // Fail closed: permission/network errors must never become a new root commit.
+    // Initialize empty repositories with a README before using batch sync.
+    let latestCommitSha: string;
+    let baseTreeSha: string;
     try {
-      let refData: { object?: { sha: string } } | null = null;
-      try {
-        refData = await this.request<{ object: { sha: string } }>(
-          `/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`
-        );
-      } catch {
-        refData = await this.request<{ object: { sha: string } }>(
-          `/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`
-        );
+      const ref = await this.request<{ object: { sha: string } }>(
+        `/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`
+      );
+      latestCommitSha = ref.object.sha;
+      const commit = await this.request<{ tree: { sha: string } }>(
+        `/repos/${owner}/${repo}/git/commits/${latestCommitSha}`
+      );
+      baseTreeSha = commit.tree.sha;
+    } catch (error) {
+      if (error instanceof GitHubApiError && (error.status === 404 || error.status === 409)) {
+        throw new Error('Cannot read the target branch. Check repository access and initialize an empty repository with a README before ZIP sync.');
       }
-
-      if (refData?.object?.sha) {
-        latestCommitSha = refData.object.sha;
-        const commitData = await this.request<{ tree: { sha: string } }>(
-          `/repos/${owner}/${repo}/git/commits/${latestCommitSha}`
-        );
-        baseTreeSha = commitData.tree?.sha || null;
-      }
-    } catch {
-      // Empty repo with 0 commits or new uninitialized branch
-      latestCommitSha = null;
-      baseTreeSha = null;
+      throw error;
     }
+
+    this.assertGeneration(batchEpoch);
 
     // 2. Create Blobs with parallel concurrency, retry mechanism, and rate-limit backoff
     const treeEntries: Array<{ path: string; mode: string; type: 'blob'; sha: string | null }> = [];
@@ -424,6 +460,7 @@ class GitHubService {
 
       let lastError: unknown;
       for (let attempt = 1; attempt <= retries; attempt++) {
+        this.assertGeneration(batchEpoch);
         try {
           const blobRes = await this.request<{ sha: string }>(`/repos/${owner}/${repo}/git/blobs`, {
             method: 'POST',
@@ -458,6 +495,7 @@ class GitHubService {
             size: byteSize,
           };
         } catch (err: unknown) {
+          this.assertGeneration(batchEpoch);
           lastError = err;
           const errMsg = err instanceof Error ? err.message : '';
           const isRateLimit = errMsg.includes('rate limit') || errMsg.includes('429') || errMsg.includes('secondary');
@@ -499,6 +537,11 @@ class GitHubService {
       }
     }
 
+    this.assertGeneration(batchEpoch);
+    if (failedFiles.length > 0) {
+      throw new Error(`Sync aborted: ${failedFiles.length} file upload(s) failed. Branch unchanged. ${failedFiles[0].error}`);
+    }
+
     // Add deleted paths with sha: null (only valid if base_tree exists)
     if (baseTreeSha) {
       for (const delPath of validDeletePaths) {
@@ -538,6 +581,7 @@ class GitHubService {
       body: JSON.stringify(treePayload),
     });
 
+    this.assertGeneration(batchEpoch);
     // 4. Create Commit
     onProgress?.({
       step: 'commit',
@@ -550,9 +594,9 @@ class GitHubService {
 
     const defaultMsg =
       successfulFiles.length > 0 && validDeletePaths.length > 0
-        ? `feat: sync ${successfulFiles.length} files and remove ${validDeletePaths.length} legacy files via Gothwad ZIP Sync`
+        ? `feat: sync ${successfulFiles.length} files and remove ${validDeletePaths.length} legacy files via GitPlus ZIP Sync`
         : successfulFiles.length > 0
-        ? `feat: sync ${successfulFiles.length} files via Gothwad ZIP Sync`
+        ? `feat: sync ${successfulFiles.length} files via GitPlus ZIP Sync`
         : `chore: remove ${validDeletePaths.length} legacy files`;
 
     const parents = latestCommitSha ? [latestCommitSha] : [];
@@ -576,50 +620,16 @@ class GitHubService {
       failedCount: failedFiles.length,
     });
 
-    let refUpdated = false;
-    if (latestCommitSha) {
-      try {
-        await this.request<{ object: { sha: string } }>(
-          `/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`,
-          {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              sha: newCommitRes.sha,
-              force: true,
-            }),
-          }
-        );
-        refUpdated = true;
-      } catch {
-        // Fallback to POST /git/refs below
+    this.assertGeneration(batchEpoch);
+    // Never force-push: reject concurrent changes instead of overwriting them.
+    await this.request<{ object: { sha: string } }>(
+      `/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sha: newCommitRes.sha, force: false }),
       }
-    }
-
-    if (!refUpdated) {
-      try {
-        await this.request<{ object: { sha: string } }>(`/repos/${owner}/${repo}/git/refs`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ref: `refs/heads/${branch}`,
-            sha: newCommitRes.sha,
-          }),
-        });
-      } catch {
-        await this.request<{ object: { sha: string } }>(
-          `/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`,
-          {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              sha: newCommitRes.sha,
-              force: true,
-            }),
-          }
-        );
-      }
-    }
+    );
 
     const isFullySuccessful = failedFiles.length === 0;
 
@@ -756,7 +766,6 @@ class GitHubService {
   public async starRepo(owner: string, repo: string): Promise<void> {
     return this.request<void>(`/user/starred/${owner}/${repo}`, {
       method: 'PUT',
-      headers: { 'Content-Length': '0' },
     });
   }
 
@@ -866,7 +875,10 @@ class GitHubService {
 
   public async getJobLogs(owner: string, repo: string, jobId: number): Promise<string> {
     const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/actions/jobs/${jobId}/logs`;
+    const epoch = this.epoch;
+    this.assertGeneration(epoch);
     const res = await fetch(url, {
+      signal: this.sessionAbort.signal,
       headers: {
         Accept: 'application/vnd.github+json',
         Authorization: `Bearer ${this.token}`,
@@ -875,7 +887,9 @@ class GitHubService {
     if (!res.ok) {
       throw new Error(`Failed to fetch logs: ${res.statusText}`);
     }
-    return res.text();
+    const logs = await res.text();
+    this.assertGeneration(epoch);
+    return logs;
   }
 
   // 11. GitHub Releases & Tags (Feature 8)
