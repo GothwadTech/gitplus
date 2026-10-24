@@ -93,3 +93,12 @@ A user reported that GitHub consent succeeded but GitPlus did not connect after 
 - Correct Pages dashboard guidance: **Settings → Variables and secrets** is the binding entry point; the separate Runtime panel is not where secrets are entered. No build-time secret injection or relaxed OAuth security checks.
 - Local validation: **56 unit tests, 11 browser tests**, TypeScript, production build and Functions compilation passed; dependency audit reported zero known vulnerabilities.
 - This repairs failure reporting/visibility; it is **not evidence that the reported live authorization problem has been resolved**. A fresh attempt on the diagnostic deployment is needed to identify the actual failing stage/reason.
+
+## Follow-up: unrecognized completion 502 (2026-10-24)
+
+The user supplied `[complete:unknown_error; HTTP 502]`. Review found that all ordinary current-backend 502 paths emit recognized identifiers, while the older `github_exchange_failed` response reproduced the diagnostic compatibility gap. This does not establish that the user's backend is old: a different/intermediary JSON response can also produce that message.
+
+- Recognize the legacy exchange code without blaming credentials; classify unexpected JSON failures separately and never echo their contents.
+- Add a public response-contract marker and optional strictly validated short Pages commit to OAuth config/headers, so the custom-domain backend can be checked without another authorization attempt.
+- Keep success behavior, cookie forwarding, state/PKCE/origin/owner protections unchanged; no production secrets accessed and no private diagnostic logging added.
+- Local checks: **59 unit tests and 13 browser tests passed**, TypeScript, Vite build and Functions compilation passed. Live failure cause remains unconfirmed; this is compatibility/serving-version diagnostics, not proof of repaired live authorization.

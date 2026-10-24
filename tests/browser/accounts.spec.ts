@@ -236,3 +236,21 @@ for (const failure of ['provider', 'html', 'guard'] as const) {
     expect(errors).toEqual([]);
   });
 }
+
+for (const legacy of [true, false]) {
+  test(`${legacy ? 'legacy' : 'unidentified'} backend 502 is actionable and never claims the OAuth secret is wrong`, async ({ page }) => {
+    const errors = await mockApp(page, () => ({ status: 200, body: account('alice') }));
+    await page.addInitScript(() => sessionStorage.setItem('gitplus_github_oauth_pending', JSON.stringify({ ownerId: 'alice-id', state: 'a'.repeat(43), verifier: 'b'.repeat(43), expires: Date.now() + 600000 })));
+    await page.route(`${ORIGIN}/api/github/complete`, (route) => route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: legacy ? 'github_exchange_failed' : 'private-error-must-not-display', message: 'private-message-must-not-display' }) }));
+    await page.goto(`${ORIGIN}/?github_oauth=complete&authuser=a`);
+    const alert = page.locator('#github-connection-error');
+    await expect(alert).toContainText(`[complete:${legacy ? 'github_exchange_failed' : 'oauth_response_unrecognized'}; HTTP 502]`);
+    await expect(alert).toContainText('[backend:unmarked; deployment:unavailable]');
+    await expect(alert).not.toContainText('private-');
+    await expect(alert).not.toContainText('unknown_error');
+    await expect(alert).toBeInViewport();
+    await expect(page.locator('#pat-input')).toBeEnabled();
+    expect(await page.evaluate(() => sessionStorage.getItem('gitplus_github_connection'))).toBeNull();
+    expect(errors).toEqual([]);
+  });
+}

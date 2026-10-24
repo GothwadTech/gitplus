@@ -1,4 +1,4 @@
-import { oauthFailure } from '../../shared/githubOAuthErrors';
+import { oauthFailure, oauthResponseFailure } from '../../shared/githubOAuthErrors';
 import { challengeFor, OAUTH_PENDING_KEY, OAUTH_RETURN_PARAM, OAUTH_TTL_SECONDS, randomProof, validProof } from '../../shared/githubOAuth';
 import { record, type AuthenticatedSession } from '../../shared/accounts';
 import { githubService } from './github';
@@ -21,8 +21,7 @@ async function api(path: string, data: unknown) {
   if (!response.ok || !result) {
     // Session verification has its own sanitized messages, but keep OAuth diagnostics
     // allowlisted: never display arbitrary response bodies or unknown error strings.
-    const code = result?.error ?? (result?.status === 'anonymous' || result?.status === 'unavailable' ? 'account_unavailable' : 'unknown_error');
-    throw new Error(oauthFailure(stage, code, response.status, result?.providerStatus));
+    throw new Error(oauthResponseFailure(stage, result, response));
   }
   return result;
 }

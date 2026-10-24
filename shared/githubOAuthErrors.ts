@@ -1,6 +1,10 @@
+import { OAUTH_PROTOCOL, OAUTH_PROTOCOL_HEADER, OAUTH_DEPLOYMENT_HEADER } from './githubOAuth';
+
 // Only fixed, public diagnostic messages may reach the UI. Never reflect provider
 // error_description, URLs, response bodies, cookies, codes, verifiers or credentials.
 export const OAUTH_ERRORS = {
+  github_exchange_failed: 'An older GitPlus backend reported a GitHub token-exchange failure without a specific reason. Check that the custom domain is serving the latest Pages Functions deployment; do not assume the secret is wrong.',
+  oauth_response_unrecognized: 'The OAuth endpoint returned JSON that does not match the expected GitPlus error contract. Check the API deployment and any proxy/Worker route on this domain. This response does not establish that the OAuth credentials are wrong.',
   oauth_not_configured: 'The deployed Pages Function is missing OAuth configuration. Set the two credentials in Pages Settings → Variables and secrets, then redeploy.',
   first_party_domain_required: 'Open GitPlus on its configured Gothwad Tech custom domain before connecting GitHub.',
   origin_not_allowed: 'GitPlus rejected the request origin. Open the custom domain directly in the same browser tab and start again.',
@@ -36,4 +40,15 @@ export function oauthFailure(stage: 'start' | 'complete' | 'callback', code: unk
   const safe = knownOAuthError(code);
   const upstream = typeof providerStatus === 'number' && Number.isInteger(providerStatus) && providerStatus >= 100 && providerStatus <= 599 ? `; GitHub HTTP ${providerStatus}` : '';
   return `${OAUTH_ERRORS[safe]} [${stage}:${safe}${status ? `; HTTP ${status}` : ''}${upstream}]`;
+}
+
+export function oauthResponseFailure(stage: 'start' | 'complete', result: Record<string, unknown> | null, response: Response): string {
+  const candidate = result?.error ?? (result?.status === 'anonymous' || result?.status === 'unavailable' ? 'account_unavailable' : 'unknown_error');
+  const code = knownOAuthError(candidate) === 'unknown_error' ? 'oauth_response_unrecognized' : candidate;
+  const protocol = response.headers.get(OAUTH_PROTOCOL_HEADER);
+  const contract = protocol === OAUTH_PROTOCOL ? 'current' : protocol ? 'different' : 'unmarked';
+  const revision = response.headers.get(OAUTH_DEPLOYMENT_HEADER);
+  // Never render arbitrary headers or unknown JSON fields in a diagnostic.
+  const deployment = revision && /^[a-f0-9]{7,40}$/.test(revision) ? revision.slice(0, 12) : 'unavailable';
+  return `${oauthFailure(stage, code, response.status, result?.providerStatus)} [backend:${contract}; deployment:${deployment}]`;
 }

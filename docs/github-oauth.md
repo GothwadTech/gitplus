@@ -94,3 +94,22 @@ The earlier implementation discarded GitHub's specific error categories and plac
 | `response_not_json` / `github_internal_error` | Investigate Pages routing/runtime, rather than asking the user to repeatedly change secrets. |
 
 Only fixed allowlisted categories and numeric HTTP statuses are displayed. Provider descriptions, exception text and unknown error strings are not reflected. No diagnostic endpoint exposes secret values, token responses, cookie contents or callback codes, and no request/response logging was added. Share only the visible diagnostic—not a HAR, full callback URL or network response containing credentials. Existing origin/owner/state/PKCE validation remains unchanged.
+
+### `complete:unknown_error; HTTP 502` and serving-version checks
+
+This reports a parsed JSON failure from the completion endpoint whose error identifier was not recognized. It is **not** evidence that runtime bindings are missing or the secret is incorrect. The current backend's normal 502 paths use specific recognized identifiers. One reproducible compatibility gap was the previous backend's `github_exchange_failed` code, which the first diagnostic frontend mapped to `unknown_error`. That legacy code is now recognized; unknown bodies are classified as `oauth_response_unrecognized`, not echoed.
+
+Before asking someone to authorize repeatedly, open the public, no-store endpoint:
+
+```text
+https://gitplus.gothwadtech.com/api/github/config
+```
+
+It returns only `enabled`, public `scopes`, `protocol` (currently `gitplus-oauth-2`) and `deployment` (a shortened Pages commit SHA, or null if unavailable). No Client ID, secret, cookie, token, verifier or authorization code is returned. OAuth responses, including callbacks/errors, also carry `X-GitPlus-OAuth-Protocol` and, when available, `X-GitPlus-Deployment`. The frontend renders only a fixed contract classification and strictly validated hex revision in error diagnostics, never arbitrary headers.
+
+- Missing `protocol`: that config response is not the newly instrumented handler. Check the production deployment/custom-domain mapping and any Worker route overriding `/api/*`.
+- Config has the current protocol but completion is `backend:unmarked`: investigate the completion route and intermediary responses, rather than assuming the whole backend updated. Missing headers alone do not prove an old deployment; intermediaries may remove them.
+- `deployment` differs from the intended production commit: verify which Pages deployment is promoted for the custom domain. A successful GitHub Pages check alone does not prove what every custom-domain path is serving.
+- A current, marked completion error has a known provider category: investigate that category. The version fields do not validate credentials or prove live OAuth works.
+
+No request/response body logging or automatic token-exchange retry was added. State/PKCE/owner checks and local-only persistence remain unchanged. The reported live failure still requires serving-version/response evidence before attributing its cause.
