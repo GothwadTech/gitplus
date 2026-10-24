@@ -18,13 +18,13 @@
 | 2. First-party Accounts SSO | Read-only Pages session adapter; HttpOnly cookie verification; public-profile projection; automatic existing-session recognition | Implemented; local unit/runtime tests, live deployment still pending |
 | 3. Account isolation and lifecycle | Stable slot selector, user-ID-bound GitHub connection, abort/epoch guards, retry and separate local/global sign-out | Implemented; regression-tested |
 | 4. Deployment verification | Functions bundle, no-store API, visible preview restriction, regression/browser tests | Local checks implemented; operator acceptance on a real staging domain remains required |
-| 5. GitHub authorization upgrade | GitHub App (preferred) or server-side OAuth, installation/repo selection, secure callback/state, revocation, encrypted credential storage | Planned; needs GitHub App registration and server-side storage/security design |
+| 5. GitHub authorization + universal menu | OAuth App + PAT, broad scopes and optional deletion, state/S256 PKCE, local owner-bound token; actual Accounts-hosted menu | Implemented and tested; runtime OAuth credentials/live operator acceptance remain required |
 | 6. Workspace reliability | All-endpoint pagination, stale-diff conflict detection, executable/symlink handling, drafts scoped by account/repo, coherent editor preferences | Planned; see current limitations in audit |
 | 7. Product quality | Keyboard/dialog accessibility, responsive end-to-end coverage, observability without secrets, recovery UX, release checks | Planned |
 
-Phases 2–3 deliberately do **not** add a GitHub token vault, automatic PAT sharing across devices, or a duplicate Gothwad login database. Those would change the security boundary and need a separate reviewed design.
+The accepted design deliberately adds **no D1/token vault or cross-device sync**. GitHub App installation/selected-repository selection was rejected in favor of an OAuth App with broad consent. Local session storage remains the connection model; reconnect on each device. PAT remains an alternative.
 
-## Release acceptance before moving to Phase 5
+## Live release acceptance
 
 1. Connect a first-party staging domain to this Pages project and set `GITPLUS_ORIGIN` to that exact origin.
 2. Verify sign-in once on Accounts automatically opens GitPlus's GitHub connection screen; no Accounts token appears in JavaScript-readable storage or JSON.
@@ -32,6 +32,7 @@ Phases 2–3 deliberately do **not** add a GitHub token vault, automatic PAT sha
 4. Verify silent session refresh keeps Accounts cookies working across Mail, Store and Drive. Rejected selectors must not log those products out.
 5. Exercise timeout, HTML routing error, 429, expired login and a return without cookies. None may become an automatic redirect loop.
 6. Check local sign-out, GitHub-only disconnect, and explicit global Accounts sign-out independently.
-7. Complete the disposable-repository write tests in the Pages guide before important repositories are used.
+7. Configure OAuth runtime credentials using [the CLI fallback](github-oauth.md) if needed, and verify real consent/cancellation plus the hosted universal menu.
+8. Complete the disposable-repository write tests in the Pages guide before important repositories are used.
 
 No external deployment, DNS change, Accounts migration or GitHub App registration was performed as part of this source implementation.

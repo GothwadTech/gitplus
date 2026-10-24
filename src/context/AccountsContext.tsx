@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { type AccountSession, RETURN_MARKER, validSelector } from '../../shared/accounts';
 import { sessionClient } from '../services/accounts/sessionClient';
+import { clearPendingOAuth } from '../services/githubOAuth';
 import { githubService } from '../services/github';
 
 const SELECTOR_KEY = 'gitplus_account_selector';
@@ -101,6 +102,7 @@ export function AccountsProvider({ children }: React.PropsWithChildren) {
   const switchAccount = useCallback((value: string) => {
     if (!validSelector(value)) return;
     generation.current++;
+    clearPendingOAuth();
     sessionClient.reset();
     githubService.bindAccount(null);
     store(SELECTOR_KEY, value);
@@ -113,6 +115,7 @@ export function AccountsProvider({ children }: React.PropsWithChildren) {
   }, []);
   const signOut = useCallback(() => {
     generation.current++;
+    clearPendingOAuth();
     sessionClient.reset();
     githubService.bindAccount(null);
     store(PAUSED_KEY, '1');

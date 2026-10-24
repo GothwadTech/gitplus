@@ -13,7 +13,7 @@ npm run check
 
 This runs regression tests, TypeScript, Vite (`dist/`) and Pages Functions compilation (`.wrangler/functions-build/`). Do not commit either output directory. npm is the only lockfile source of truth.
 
-Current work is on `arena/9559f2f5-gitplus`. A Pages project building `main` will not receive these changes until they are merged/pushed to that release branch. No changes have been pushed or deployed by this implementation.
+A Pages project building `main` receives changes after the implementation PR is merged. Verify the deployed commit in Pages rather than assuming a successful local build means production is updated.
 
 ## 2. Pages Git integration
 
@@ -33,7 +33,7 @@ Create/connect a **Pages** project, not a plain Worker application:
 - `GITPLUS_ORIGIN=https://gitplus.gothwadtech.com`: exact trusted HTTPS origin for the app. It must be a subdomain of `gothwadtech.com` with no path/port. This is the **proposed/default host**, not proof of existing DNS.
 - `ACCOUNTS_API_ORIGIN=https://api.gothwadtech.com`: dedicated API Worker origin for server-to-server requests. Do not accidentally point it at a static Accounts Pages frontend.
 
-No new D1/R2 binding, `JWT_SECRET`, `MAIL_INTERNAL_TOKEN`, OAuth client secret or GitHub PAT is required. Do not copy another product's secrets into this project. Runtime origins are not `VITE_*` variables. In a Wrangler-configured Pages project, keep runtime settings in the config source; use separate reviewed configuration for a dedicated staging project/origin rather than relying on divergent dashboard overrides.
+No new D1/R2 binding, `JWT_SECRET`, `MAIL_INTERNAL_TOKEN` or user GitHub PAT is required. **GitHub OAuth additionally needs runtime `GITHUB_CLIENT_ID` and encrypted `GITHUB_CLIENT_SECRET`.** These must not be `VITE_*` values. If dashboard runtime editing is disabled, use `npx wrangler pages secret put GITHUB_CLIENT_ID --project-name gitplus` and `npx wrangler pages secret put GITHUB_CLIENT_SECRET --project-name gitplus`, entering each value privately at the prompt. See [exact registration, CLI and redeploy steps](github-oauth.md). PAT remains available without OAuth configuration. Do not copy another product's secrets into this project. Runtime origins are not `VITE_*` variables. In a Wrangler-configured Pages project, keep runtime settings in the config source; use separate reviewed configuration for a dedicated staging project/origin rather than relying on divergent dashboard overrides.
 
 ## 3. First-party custom domain (required for real SSO)
 
@@ -71,7 +71,7 @@ Optional second terminal:
 npm run dev           # Vite at 0.0.0.0:3000, /api proxy -> localhost:8788 inside server
 ```
 
-Browser code only calls relative `/api/session`; it never calls the user's browser `localhost` for a separate backend. Vite allows Arena `.e2b.app` preview hosts. Local SSO returns `unsupported` by design; unit/browser tests use mocked responses without a runtime bypass. Test real SSO on a first-party staging domain.
+Browser code calls relative `/api/session`, `/api/github/*` and `/api/accounts/*`; it never calls the user's browser `localhost` for a separate backend. Vite allows Arena `.e2b.app` preview hosts. Local SSO returns `unsupported` by design; unit/browser tests use mocked responses without a runtime bypass. Test real SSO on a first-party staging domain.
 
 `npm run preview` serves only Vite assets and cannot alone validate Functions. `_headers` are interpreted by Pages/Wrangler, not Vite. The local runtime may warn when blocked sandbox internet prevents fetching Cloudflare's optional `Request.cf` placeholder; this does not replace live deployment testing.
 
@@ -102,6 +102,12 @@ Browser code only calls relative `/api/session`; it never calls the user's brows
 
 ### GitHub and UI
 
+- [ ] Register the OAuth App with exact `/api/github/callback`, configure runtime credentials, redeploy and verify `/api/github/config` reports `enabled: true` without exposing secrets.
+- [ ] Test Connect with GitHub success, cancelled consent, expired state, wrong tab and account switch while completing; the local token must remain owner-bound.
+- [ ] Confirm no tokens appear in frontend URLs, permanent storage or server logs. Reconnect separately on another device.
+- [ ] Test the optional deletion consent on a disposable repository; base scopes cannot bypass GitHub/org/branch policies.
+- [ ] Load the real Accounts-hosted universal menu and its modules with CORS/CSP; test switch, add/manage account, slot/global sign-out, local-only sign-out and blocked-module fallback.
+
 - [ ] Use a disposable repository and an expiring least-privilege PAT. Browse/edit an empty file and refresh the live tree.
 - [ ] Compare a ZIP containing `README.md`, `docs/`, `public/` and nested `src/`. Paths are preserved; wrapper stripping is opt-in.
 - [ ] Confirm selected deletions, protected-branch rejection and non-fast-forward errors; do not force overwrite the branch.
@@ -117,7 +123,10 @@ Browser code only calls relative `/api/session`; it never calls the user's brows
 | `accounts_not_json` / `accounts_redirect` | API origin/Worker routing is incorrect; Accounts login frontend is not the API backend. |
 | Anonymous after Accounts handoff | Inspect cookie domain/Secure/path, chosen slot, exact app origin and provider availability; do not retry by automatic redirects. |
 | Account no longer available | Provider fell back from a missing selector; GitPlus rejected it. Choose an account again. |
-| GitHub 401 / 403 / 404 | Separate from Gothwad login: check PAT expiry, repo access, organization SSO/approval, branch and rate limits. |
+| GitHub 401 / 403 / 404 | Separate from Gothwad login: check OAuth/PAT expiry, repo access, organization SSO/approval, branch and rate limits. |
+| OAuth unavailable | Check runtime credentials on the deployed Function, not only build-time variables; use the CLI fallback above. |
+| OAuth invalid/expired attempt | Start again in the same tab/account; concurrent attempts can replace the shared transaction cookie. |
+| Universal menu fails to load | Check canonical Accounts widget availability, module CORS and static CSP; use the visible management link meanwhile. |
 | Empty-repo ZIP sync fails | Add an initial README commit first. |
 | Actions logs/raw files fail | Browser CORS or GitHub authorization limitation; use the resource on GitHub. |
 

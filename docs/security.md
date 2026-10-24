@@ -14,9 +14,9 @@ GitPlus is a Gothwad Tech product. Product sign-in uses the existing first-party
 
 ## GitHub credentials (separate connection)
 
-GitHub repository permissions still use a separately supplied PAT. Gothwad login does not authorize a GitHub account or derive a GitHub credential.
+GitHub repository permissions use a separately consented OAuth App token or supplied PAT. Gothwad login does not authorize a GitHub account or derive a GitHub credential.
 
-- PATs are sent in Authorization headers only to GitHub's API. The request helper refuses other origins.
+- Stored OAuth tokens/PATs are sent in Authorization headers only to GitHub's API. The request helper refuses other origins.
 - The current connection is stored in memory and tab `sessionStorage` under `gitplus_github_connection`, with the verified Gothwad user ID. It is never deliberately written to permanent `localStorage`.
 - Legacy unbound PAT copies in local/session storage are removed, not assigned to whichever Gothwad user logs in first.
 - Switching Gothwad users or locally signing out clears the old connection, aborts pending GitHub requests and invalidates multi-step batch generations. Already accepted upstream writes cannot be undone by aborting.
@@ -24,7 +24,13 @@ GitHub repository permissions still use a separately supplied PAT. Gothwad login
 - Session storage is **not encrypted** and remains accessible to same-origin JavaScript. XSS, extensions or a compromised deployment can steal the PAT. The owner tag prevents accidental credential reuse, not malicious storage tampering or exfiltration.
 - Browser session restore and duplicated tabs may preserve session storage. Local sign-out affects this tab; it does not revoke the PAT or globally sign out Gothwad. Revoke compromised credentials with their provider.
 - Never put PATs/Accounts tokens in source, Pages environment variables, `VITE_*`, screenshots or logs. Origin configuration is public; credentials are not.
-- Global Accounts logout remains an explicit action in Accounts. A failed GitPlus identity read does not propagate Accounts' sign-out-all cookie deletions to Mail/Store/Drive.
+- The real universal menu can explicitly sign out one/all Gothwad accounts through narrow, exact-origin JSON POST routes that verify the current account and target slot. Confirmations distinguish ecosystem logout from local GitPlus sign-out. A failed GitPlus identity read does not propagate Accounts' sign-out-all cookie deletions to Mail/Store/Drive.
+
+## OAuth App security
+
+The base OAuth scopes are `repo workflow gist read:user user:email read:org`; `delete_repo` is requested only with the separate checkbox. Previously granted permissions must be revoked at GitHub, not merely unchecked. These broad grants never bypass user roles, organization approval/SSO or protected branches. The PAT alternative offers narrower repository-level control.
+
+The Pages runtime secret never enters the frontend bundle. Start/complete use exact-origin JSON POSTs and verified Accounts identity. A ten-minute encrypted HttpOnly host-only cookie binds state, S256 PKCE challenge, account owner/slot and client ID; the callback checks state/owner, and completion requires the same-tab verifier. Token exchange uses a fixed GitHub URL with no redirects, timeouts and no-store responses. GitHub consumes the code once. No D1 or refresh-token persistence is added. Never log callback query strings or OAuth bodies. See [protocol, CLI configuration and revocation](github-oauth.md).
 
 ## Least privilege
 
@@ -59,6 +65,6 @@ Token support varies by endpoint and organization policy. Organization tokens ma
 
 ## Hosting defenses
 
-`public/_headers` defines a restrictive CSP, `nosniff`, no-referrer, disabled camera/microphone/geolocation and caching rules. Production pages cannot be embedded. Inline styles remain allowed for React layout/progress styles; inline scripts and `eval` are not allowed. External script CDNs are not used. Google Fonts and GitHub images/API are narrowly allowed.
+`public/_headers` defines a restrictive CSP, `nosniff`, no-referrer, disabled camera/microphone/geolocation and caching rules. Production pages cannot be embedded. Inline styles remain allowed for React layout/progress styles; inline scripts and `eval` are not allowed. The only allowed external script source is the canonical Accounts `/widget/` directory for the **actual universal account menu**. Its ES module and relative imports require CORS. It runs with GitPlus privileges and can read JavaScript-accessible GitHub tokens; trusting it is an explicit first-party supply-chain boundary, not isolation. Production uses the hosted module, not a vendored copy; pinned fixtures are test-only. Google Fonts and GitHub images/API are narrowly allowed.
 
 Headers are defense-in-depth, not proof that the app is immune to XSS or dependency attacks. Run `npm audit`, review dependency updates, restrict who can deploy, use HTTPS and test the real Pages headers. Do not cache private API responses in a service worker or add an unauthenticated proxy to work around CORS.

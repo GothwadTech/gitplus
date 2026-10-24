@@ -39,27 +39,4 @@ export function AccountsGate({ children }: React.PropsWithChildren) {
   );
 }
 
-export function AccountsBar() {
-  const { state, switchAccount, signOut } = useAccounts();
-  if (state.status !== 'authenticated') return null;
-  return (
-    <div id="gothwad-account-bar" className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-xs bg-[#f1f3f4] dark:bg-[#303134] text-[#202124] dark:text-[#e8eaed] border-b border-[#dadce0] dark:border-[#3c4043]">
-      <span className="text-[#5f6368] dark:text-[#9aa0a6]">GitPlus <span aria-hidden="true">·</span> Gothwad Tech</span>
-      <details className="relative">
-        <summary className="cursor-pointer font-semibold py-1 max-w-[240px] truncate">{state.user.email}</summary>
-        <div className="absolute right-0 top-full z-[70] mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-2xl border border-[#dadce0] dark:border-[#3c4043] bg-white dark:bg-[#292a2d] p-4 shadow-xl space-y-3">
-          <div><p className="font-bold truncate">{state.user.name}</p><p className="text-[#5f6368] dark:text-[#9aa0a6]">Signed in with Gothwad Accounts</p></div>
-          {state.accounts.length > 1 && <label className="block space-y-1"><span>Switch Gothwad account</span>
-            <select id="gothwad-account-select" className="w-full rounded-lg border border-[#dadce0] dark:border-[#3c4043] bg-transparent p-2" value={state.activeSlot || ''} onChange={(event) => {
-              if (confirm('Switch Gothwad account? GitPlus will disconnect GitHub and discard unsaved work in this tab.')) switchAccount(event.target.value);
-            }}>{state.accounts.map((account) => <option className="bg-white dark:bg-[#292a2d]" key={account.slot} value={account.slot}>{account.username}@gothwadtech.com</option>)}</select>
-          </label>}
-          <a className="block text-[#0494f4] underline" href={`${BRAND.accountsWebOrigin}/u/${state.authuser}/me`} target="_blank" rel="noreferrer">Manage Gothwad Account / global sign-out</a>
-          <a className="block text-[#0494f4] underline" href={signInUrl(window.location.origin, null, true)}>Choose or add an account</a>
-          <button type="button" id="gitplus-signout" className="block w-full rounded-lg border border-[#dadce0] dark:border-[#3c4043] p-2 text-left" onClick={() => { if (confirm('Sign out of GitPlus in this tab and discard unsaved work? Other Gothwad apps will stay signed in.')) signOut(); }}>Sign out of GitPlus (this tab)</button>
-          <p className="text-[11px] leading-4 text-[#5f6368] dark:text-[#9aa0a6]">GitHub disconnect only removes the GitHub connection. Signing out here also pauses automatic sign-in for this tab.</p>
-        </div>
-      </details>
-    </div>
-  );
-}
+export { AccountsBar } from './AccountsBar';

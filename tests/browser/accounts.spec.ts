@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { test, expect, type Page } from '@playwright/test';
 
 const ORIGIN = 'https://gitplus.gothwadtech.com';
@@ -14,9 +16,16 @@ async function mockApp(page: Page, session: (url: URL) => { status: number; body
   page.on('dialog', (dialog) => dialog.accept());
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort());
   await page.route('https://fonts.gstatic.com/**', (route) => route.abort());
+  await page.route('https://accounts.gothwadtech.com/widget/**', async (route) => {
+    const filename = new URL(route.request().url()).pathname.split('/').pop()!;
+    if (!['account-menu.js', 'account-menu-template.js', 'account-menu-styles.js'].includes(filename)) return route.abort();
+    await route.fulfill({ contentType: 'text/javascript', headers: { 'Access-Control-Allow-Origin': '*' }, body: await readFile(`tests/fixtures/account-widget/${filename}`, 'utf8') });
+  });
   await page.route(`${ORIGIN}/**`, async (route) => {
     const url = new URL(route.request().url());
-    if (url.pathname === '/api/session') {
+    if (url.pathname === '/api/github/config') {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ enabled: true }) });
+    } else if (url.pathname === '/api/session') {
       const response = session(url);
       await route.fulfill({ status: response.status, contentType: 'application/json', body: JSON.stringify(response.body) });
     } else {
@@ -49,13 +58,13 @@ test('existing Accounts session automatically opens Connect GitHub, isolates swi
   await page.locator('#connect-github-btn').click();
   await expect(page.locator('#mobile-bottom-navigation')).toBeVisible();
   expect(JSON.parse((await page.evaluate(() => sessionStorage.getItem('gitplus_github_connection')))!).ownerId).toBe('alice-id');
-  await page.locator('#gothwad-account-bar summary').click();
-  await page.locator('#gothwad-account-select').selectOption('b');
+  await page.locator('#gothwad-account-menu').click();
+  await page.locator('[data-gw-switch="b"]').click();
   await expect(page.locator('#gothwad-account-bar')).toContainText('bob@gothwadtech.com');
   await expect(page.locator('#pat-input')).toBeVisible();
   expect(await page.evaluate(() => sessionStorage.getItem('gitplus_github_connection'))).toBeNull();
-  await page.locator('#gothwad-account-bar summary').click();
-  await page.locator('#gitplus-signout').click();
+  await page.locator('#gothwad-account-menu').click();
+  await page.getByRole('button', { name: 'Sign out of GitPlus (this tab)', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Signed out of GitPlus' })).toBeVisible();
   const beforeReload = checks;
   await page.reload();
@@ -94,4 +103,114 @@ test('actual local Pages Function refuses preview SSO and unknown API routes are
   await page.goto('http://127.0.0.1:8788');
   await expect(page.getByRole('heading', { name: 'Use your GitPlus custom domain' })).toBeVisible();
   await expect(page.locator('#pat-input')).toHaveCount(0);
+});
+
+
+test('OAuth connect survives the same-tab redirect, saves only an owner-bound local token, and preserves PAT as an alternative', async ({ page }) => {
+  const errors = await mockApp(page, () => ({ status: 200, body: account('alice') }));
+  const state = 'a'.repeat(43);
+  let challenge = '';
+  let completions = 0;
+  await page.route(`${ORIGIN}/api/github/start`, async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.allowDelete).toBe(true);
+    expect(body.selector).toBe('a');
+    challenge = body.challenge;
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ownerId: 'alice-id', state, authorizeUrl: `https://github.com/login/oauth/authorize?state=${state}` }) });
+  });
+  // A mocked consent document starts a fresh routed navigation; Playwright only intercepts
+  // the first request in a server redirect chain. Backend callback/303 behavior is unit-tested.
+  await page.route('https://github.com/login/oauth/authorize?**', (route) => route.fulfill({ contentType: 'text/html', body: `<a href="${ORIGIN}/?github_oauth=complete&amp;authuser=a">Approve test app</a>` }));
+  await page.route(`${ORIGIN}/api/github/complete`, async (route) => {
+    completions++;
+    const body = route.request().postDataJSON();
+    expect(body.state).toBe(state);
+    expect(createHash('sha256').update(body.verifier).digest('base64url')).toBe(challenge);
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ownerId: 'alice-id', token: 'gho_mocked_browser_token', scope: 'repo' }) });
+  });
+  await page.goto(ORIGIN);
+  await expect(page.locator('#pat-input')).toBeVisible();
+  await expect(page.locator('#github-oauth-connect')).toBeEnabled();
+  await page.locator('#oauth-allow-delete').check();
+  await page.locator('#github-oauth-connect').click();
+  await page.getByRole('link', { name: 'Approve test app' }).click();
+  await expect(page.locator('#mobile-bottom-navigation')).toBeVisible();
+  expect(completions).toBe(1);
+  expect(page.url()).not.toContain('github_oauth');
+  expect(page.url()).not.toContain('gho_');
+  expect(await page.evaluate(() => localStorage.getItem('gitplus_github_connection'))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem('gitplus_github_oauth_pending'))).toBeNull();
+  expect(JSON.parse((await page.evaluate(() => sessionStorage.getItem('gitplus_github_connection')))!).ownerId).toBe('alice-id');
+  await page.reload();
+  await expect(page.locator('#mobile-bottom-navigation')).toBeVisible();
+  expect(completions).toBe(1);
+  await page.locator('#header-logout-btn').click();
+  await expect(page.locator('#pat-input')).toBeVisible();
+  expect(await page.evaluate(() => sessionStorage.getItem('gitplus_github_connection'))).toBeNull();
+  expect(errors).toEqual([]);
+});
+
+test('missing OAuth runtime credentials leaves PAT usable; denied callback does not connect or leak data', async ({ page }) => {
+  const errors = await mockApp(page, () => ({ status: 200, body: account('alice') }));
+  await page.route(`${ORIGIN}/api/github/config`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ enabled: false }) }));
+  await page.goto(`${ORIGIN}/?github_oauth=error&oauth_error=denied`);
+  await expect(page.locator('#github-oauth-connect')).toBeDisabled();
+  await expect(page.locator('#oauth-configuration-note')).toContainText('administrator');
+  await expect(page.getByText('GitHub authorization was cancelled.', { exact: false })).toBeVisible();
+  await expect(page.locator('#pat-input')).toBeEnabled();
+  expect(page.url()).not.toContain('github_oauth');
+  expect(errors).toEqual([]);
+});
+
+test('universal widget sign-out uses the same-origin protected action, while load failure has an honest fallback', async ({ page }) => {
+  const errors = await mockApp(page, () => ({ status: 200, body: account('alice') }));
+  let called = false;
+  await page.route(`${ORIGIN}/api/accounts/signout`, async (route) => {
+    expect(route.request().postDataJSON()).toEqual({ selector: 'a', slot: 'a' });
+    called = true;
+    await route.fulfill({ contentType: 'application/json', body: '{"ok":true}' });
+  });
+  await page.goto(ORIGIN);
+  await page.locator('#gothwad-account-menu').click();
+  await page.locator('[data-gw-signout-slot="a"]').click();
+  await expect(page.getByRole('heading', { name: 'Signed out of GitPlus' })).toBeVisible();
+  expect(called).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('blocked universal widget shows a management link instead of a duplicate menu', async ({ page }) => {
+  const errors = await mockApp(page, () => ({ status: 200, body: account('alice') }));
+  await page.route('https://accounts.gothwadtech.com/widget/**', (route) => route.abort());
+  await page.goto(ORIGIN);
+  await page.locator('#gothwad-account-menu').click();
+  await expect(page.getByText('The universal Accounts menu could not load.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Manage Gothwad Account', exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('late OAuth completion cannot replace a newly selected Gothwad user connection', async ({ page }) => {
+  const errors = await mockApp(page, (url) => ({ status: 200, body: account(url.searchParams.get('authuser') === 'b' ? 'bob' : 'alice') }));
+  await page.addInitScript(() => sessionStorage.setItem('gitplus_github_oauth_pending', JSON.stringify({ ownerId: 'alice-id', state: 'a'.repeat(43), verifier: 'b'.repeat(43), expires: Date.now() + 600000 })));
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const requested = page.waitForRequest(`${ORIGIN}/api/github/complete`);
+  await page.route(`${ORIGIN}/api/github/complete`, async (route) => {
+    await held;
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ownerId: 'alice-id', token: 'gho_late_alice_token', scope: 'repo' }) });
+  });
+  await page.goto(`${ORIGIN}/?github_oauth=complete&authuser=a`);
+  await requested;
+  await page.locator('#gothwad-account-menu').click();
+  await page.locator('[data-gw-switch="b"]').click();
+  await expect(page.locator('#gothwad-account-bar')).toContainText('bob@gothwadtech.com');
+  await page.locator('#pat-input').fill('bob-test-only-token');
+  await page.locator('#connect-github-btn').click();
+  await expect(page.locator('#mobile-bottom-navigation')).toBeVisible();
+  const completed = page.waitForResponse(`${ORIGIN}/api/github/complete`);
+  release();
+  await (await completed).finished();
+  await expect(page.locator('#mobile-bottom-navigation')).toBeVisible();
+  expect(JSON.parse((await page.evaluate(() => sessionStorage.getItem('gitplus_github_connection')))!).ownerId).toBe('bob-id');
+  expect(await page.evaluate(() => sessionStorage.getItem('gitplus_github_connection'))).not.toContain('gho_late_alice_token');
+  expect(errors).toEqual([]);
 });

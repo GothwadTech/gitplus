@@ -20,7 +20,7 @@ No files in those repositories were edited or pushed. GitPlus does not need thei
 1. `GET /api/auth/me` returns `authenticated`, `user`, `activeId`, `authuser`, `accounts`. **It may also return raw Accounts access/refresh tokens.** GitPlus must never transparently proxy its JSON body to the browser. Our adapter emits only allowlisted identity fields (ID, username, display name, derived email, public account slots).
 2. The API can rotate session credentials during a read. Dropping valid `Set-Cookie` headers can break subsequent login. GitPlus relays only recognized `gothwad_*` cookies with `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, and the exact shared domain.
 3. The current `resolveSession` falls back to the first live slot if an explicit selector is missing. **GitPlus rejects a mismatched requested slot/index** rather than silently logging into a different account. After verification it pins stable slot `a`–`f`, not a shifting list index.
-4. Accounts' anonymous `/auth/me` path can clear all browser slot cookies. A read-only GitPlus check must not unexpectedly sign out Mail/Store/Drive; those anonymous deletion headers are not propagated. Explicit global logout remains on Accounts.
+4. Accounts' anonymous `/auth/me` path can clear all browser slot cookies. A read-only GitPlus check must not unexpectedly sign out Mail/Store/Drive; those anonymous deletion headers are not propagated. Only explicitly confirmed menu mutations may relay deletion cookies; read-only failures still cannot globally log users out.
 5. Server-to-server calls use the actual Accounts API Worker custom domain, default `https://api.gothwadtech.com/api/auth/me`, not a static frontend URL that could answer HTML. Redirects are not followed.
 
 ## Chosen architecture
@@ -37,7 +37,7 @@ GitPlus browser on https://gitplus.gothwadtech.com
       validate authenticated user + selected slot
       return sanitized identity + allowlisted HttpOnly cookie rotations
 
-  Verified Gothwad user ID -> separate owner-bound GitHub PAT -> api.github.com
+  Verified Gothwad user ID -> separate owner-bound GitHub OAuth token or PAT -> api.github.com
 ```
 
 Using a first-party Pages Function avoids browser third-party-cookie/CORS dependencies and avoids exposing the raw Accounts response. It adds **no** new identity database or locally minted login token.
@@ -56,12 +56,21 @@ Using a first-party Pages Function avoids browser third-party-cookie/CORS depend
 
 | Action | Effect |
 | --- | --- |
-| Disconnect GitHub | Clear the current PAT and GitHub UI; remain signed in to Gothwad Accounts. |
+| Disconnect GitHub | Clear the local OAuth token/PAT and GitHub UI (not the GitHub grant); remain signed in to Gothwad Accounts. |
 | Sign out of GitPlus (this tab) | Clear GitHub connection, gate workspace, persist a tab-local pause marker; no Accounts mutation. “Continue to GitPlus” re-verifies Accounts. |
 | Switch Gothwad account | Confirm loss of unsaved work, clear GitHub connection, verify the selected stable slot. |
-| Manage Gothwad Account / global sign-out | Open Accounts' own account UI. Global logout is explicit and controlled there. Other GitPlus tabs notice on a subsequent session check. |
+| Manage Gothwad Account | Open Accounts' own account management UI. |
+| Universal menu: sign out one/all accounts | Confirm ecosystem-wide sign-out, then use a same-origin protected route. Other tabs notice on a subsequent session check. |
 
-The local pause is not provider revocation. No automatic sign-out-all POST is implemented or disguised as a local action.
+The local pause is not provider revocation. No automatic sign-out-all POST is made or disguised as a local action.
+
+## Actual universal account menu
+
+GitPlus imports `https://accounts.gothwadtech.com/widget/account-menu.js`, the same shared widget used by the ecosystem—not a local lookalike. Source research also inspected Mail's `src/services/accountWidget.ts`, Store's `shared/AccountMenu.tsx` and Drive's `lib/accountMenuWidget.ts` at the pinned commits above. The loader shares in-flight imports, validates the exported API and times out after five seconds. Public stable slots map to widget IDs. It updates for theme/account changes and closes on owner changes/unmount.
+
+All mutation callbacks are overridden: switching uses the existing tab-local verified selector; sign-out POSTs require exact app Origin, JSON, verified identity and an available target slot. The fixed upstream routes are `/api/auth/accounts/{a-f}/signout` and `/api/auth/signout`. No arbitrary proxy or raw identity auto-SSO is exposed. Add-account uses a safe first-party return URL. Load failure offers an honest management link/local sign-out, not another menu implementation.
+
+The hosted widget executes as trusted app code; CSP explicitly permits its module directory. See the [supply-chain boundary](security.md). Test fixtures pin the actual three upstream modules, but production always imports the canonical hosted widget.
 
 ## `/api/session` contract
 
@@ -94,8 +103,8 @@ All Function responses explicitly set private/no-store caching and restrictive J
 ## Security boundaries / what this does not do
 
 - Gothwad authentication is not GitHub authorization. Connecting GitHub still requires consent/permissions from GitHub; no token can be derived from a Gothwad cookie or email.
-- The UI gate is not server-side authorization for GitHub writes: those go directly to GitHub and are authorized by GitHub's PAT. Anyone holding a valid PAT can call GitHub independently. Future product APIs must verify Accounts server-side on **every** protected request.
-- GitHub PATs remain JavaScript-readable session credentials. The owner tag prevents accidental cross-account reuse; it is not cryptographic proof of ownership or protection against same-origin XSS.
+- The UI gate is not server-side authorization for GitHub writes: those go directly to GitHub and are authorized by GitHub's OAuth token/PAT. Anyone holding a valid PAT can call GitHub independently. Future product APIs must verify Accounts server-side on **every** protected request.
+- GitHub OAuth tokens/PATs remain JavaScript-readable session credentials. The owner tag prevents accidental cross-account reuse; it is not cryptographic proof of ownership or protection against same-origin XSS.
 - Aborting a request cannot undo a write GitHub already accepted. Epoch checks stop later steps/retries from continuing under a newly bound account.
 - Cross-tab refresh races are ultimately owned by Accounts. GitPlus deduplicates its own requests and relays rotations; it cannot guarantee upstream refresh behavior across every ecosystem tab.
 - `pages.dev`, Arena and localhost do not support this shared-domain cookie flow. An external-domain/native product would need separately registered OAuth + S256 PKCE, exact redirects and a reviewed server session flow. No placeholder OAuth client was invented here.
