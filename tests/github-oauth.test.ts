@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { handleGitHubOAuth, TRANSACTION_COOKIE, type GitHubOAuthEnv } from '../server/githubOAuth';
 import { handleAccountAction } from '../server/accountActions';
-import { challengeFor, randomProof } from '../shared/githubOAuth';
+import { challengeFor, randomProof, OAUTH_PROTOCOL, OAUTH_PROTOCOL_HEADER, OAUTH_DEPLOYMENT_HEADER } from '../shared/githubOAuth';
 
 const origin = 'https://gitplus.gothwadtech.com';
 const env: GitHubOAuthEnv = { GITPLUS_ORIGIN: origin, GITHUB_CLIENT_ID: 'test-client-id', GITHUB_CLIENT_SECRET: 'test-only-secret-not-a-real-github-secret' };
@@ -44,7 +44,7 @@ async function callback(s: Awaited<ReturnType<typeof start>>, fetcher: typeof fe
 
 test('unconfigured OAuth reports unavailable without exposing secrets or disabling PAT infrastructure', async () => {
   const config = await handleGitHubOAuth(makeRequest('/api/github/config'), {});
-  assert.deepEqual(await config.json(), { enabled: false, scopes: ['repo', 'workflow', 'gist', 'read:user', 'user:email', 'read:org'] });
+  assert.deepEqual(await config.json(), { enabled: false, scopes: ['repo', 'workflow', 'gist', 'read:user', 'user:email', 'read:org'], protocol: OAUTH_PROTOCOL, deployment: null });
   assert.equal((await handleGitHubOAuth(makeRequest('/api/github/start', {}), {})).status, 503);
   assert.equal((await handleGitHubOAuth(new Request('https://gitplus.pages.dev/api/github/config'), env)).status, 403);
 });
@@ -219,4 +219,28 @@ test('unexpected runtime exceptions produce JSON diagnostics without exposing ex
   assert.equal(body.error, 'github_internal_error');
   assert.ok(!JSON.stringify(body).includes('private-runtime-secret'));
   assert.match(response.headers.get('Cache-Control')!, /no-store/);
+});
+
+test('OAuth config and responses identify the serving backend without credentials or arbitrary environment data', async () => {
+  const deploymentEnv = { ...env, CF_PAGES_COMMIT_SHA: 'b1506461ef205d2ef2629047664aaade6fd51399' };
+  const config = await handleGitHubOAuth(makeRequest('/api/github/config'), deploymentEnv);
+  const body = await config.json();
+  assert.equal(body.protocol, OAUTH_PROTOCOL);
+  assert.equal(body.deployment, 'b1506461ef20');
+  assert.equal(config.headers.get(OAUTH_PROTOCOL_HEADER), OAUTH_PROTOCOL);
+  assert.equal(config.headers.get(OAUTH_DEPLOYMENT_HEADER), 'b1506461ef20');
+  assert.ok(!JSON.stringify(body).includes(env.GITHUB_CLIENT_ID!));
+  assert.ok(!JSON.stringify(body).includes(env.GITHUB_CLIENT_SECRET!));
+  const invalid = await handleGitHubOAuth(makeRequest('/api/github/config'), { ...env, CF_PAGES_COMMIT_SHA: 'private-environment-value' });
+  assert.equal((await invalid.json()).deployment, null);
+  assert.equal(invalid.headers.get(OAUTH_DEPLOYMENT_HEADER), null);
+  const failure = await handleGitHubOAuth(makeRequest('/api/github/complete', {}), deploymentEnv);
+  assert.equal(failure.status, 400);
+  assert.equal(failure.headers.get(OAUTH_PROTOCOL_HEADER), OAUTH_PROTOCOL);
+  assert.equal(failure.headers.get(OAUTH_DEPLOYMENT_HEADER), 'b1506461ef20');
+  const callback = await handleGitHubOAuth(makeRequest('/api/github/callback'), deploymentEnv);
+  assert.equal(callback.status, 303);
+  assert.equal(callback.headers.get(OAUTH_PROTOCOL_HEADER), OAUTH_PROTOCOL);
+  assert.match(callback.headers.getSetCookie().at(-1)!, /Max-Age=0/);
+  assert.match(callback.headers.get('Cache-Control')!, /no-store/);
 });

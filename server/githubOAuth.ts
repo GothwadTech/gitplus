@@ -1,10 +1,10 @@
 import { OAUTH_ERRORS, type OAuthErrorCode } from '../shared/githubOAuthErrors';
 import { record, validSelector } from '../shared/accounts';
-import { base64url, challengeFor, GITHUB_SCOPES, OAUTH_TTL_SECONDS, randomProof, validProof } from '../shared/githubOAuth';
+import { base64url, challengeFor, OAUTH_PROTOCOL, OAUTH_PROTOCOL_HEADER, OAUTH_DEPLOYMENT_HEADER, GITHUB_SCOPES, OAUTH_TTL_SECONDS, randomProof, validProof } from '../shared/githubOAuth';
 import type { SessionEnv } from './accountsSession';
 import { appOrigin, jsonResponse, postGuard, smallJson, verifiedAccount } from './protectedRequest';
 
-export interface GitHubOAuthEnv extends SessionEnv { GITHUB_CLIENT_ID?: string; GITHUB_CLIENT_SECRET?: string }
+export interface GitHubOAuthEnv extends SessionEnv { GITHUB_CLIENT_ID?: string; GITHUB_CLIENT_SECRET?: string; CF_PAGES_COMMIT_SHA?: string }
 export const TRANSACTION_COOKIE = '__Host-gitplus_oauth';
 interface Transaction { state: string; challenge: string; owner: string; selector: string; expires: number; clientId: string; code?: string }
 const encoder = new TextEncoder();
@@ -51,16 +51,25 @@ function callbackRedirect(env: GitHubOAuthEnv, status: 'complete' | 'error', rea
   return new Response(null, { status: 303, headers });
 }
 export async function handleGitHubOAuth(request: Request, env: GitHubOAuthEnv, fetcher: typeof fetch = fetch): Promise<Response> {
-  try { return await oauthRequest(request, env, fetcher); }
+  let response: Response;
+  try { response = await oauthRequest(request, env, fetcher); }
   catch {
     // Do not leak runtime exception messages (which can contain credentials/URLs).
-    return jsonResponse({ error: 'github_internal_error', message: OAUTH_ERRORS.github_internal_error }, 500, [clearOAuthCookie()]);
+    response = jsonResponse({ error: 'github_internal_error', message: OAUTH_ERRORS.github_internal_error }, 500, [clearOAuthCookie()]);
   }
+  response.headers.set(OAUTH_PROTOCOL_HEADER, OAUTH_PROTOCOL);
+  const deployment = deploymentRevision(env);
+  if (deployment) response.headers.set(OAUTH_DEPLOYMENT_HEADER, deployment);
+  return response;
+}
+function deploymentRevision(env: GitHubOAuthEnv): string | null {
+  const value = env.CF_PAGES_COMMIT_SHA;
+  return typeof value === 'string' && /^[a-f0-9]{7,40}$/.test(value) ? value.slice(0, 12) : null;
 }
 async function oauthRequest(request: Request, env: GitHubOAuthEnv, fetcher: typeof fetch): Promise<Response> {
   const url = new URL(request.url);
   if (url.origin !== appOrigin(env)) return jsonResponse({ error: 'first_party_domain_required' }, 403);
-  if (url.pathname === '/api/github/config' && request.method === 'GET') return jsonResponse({ enabled: configured(env), scopes: GITHUB_SCOPES });
+  if (url.pathname === '/api/github/config' && request.method === 'GET') return jsonResponse({ enabled: configured(env), scopes: GITHUB_SCOPES, protocol: OAUTH_PROTOCOL, deployment: deploymentRevision(env) });
   if (!configured(env)) return jsonResponse({ error: 'oauth_not_configured', message: 'Connect with GitHub is not configured yet. Use a PAT or ask the administrator to configure the OAuth App.' }, 503);
 
   if (url.pathname === '/api/github/callback') {

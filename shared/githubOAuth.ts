@@ -1,3 +1,7 @@
+// Public response-contract marker, not an authentication credential.
+export const OAUTH_PROTOCOL = 'gitplus-oauth-2';
+export const OAUTH_PROTOCOL_HEADER = 'X-GitPlus-OAuth-Protocol';
+export const OAUTH_DEPLOYMENT_HEADER = 'X-GitPlus-Deployment';
 export const GITHUB_SCOPES = ['repo', 'workflow', 'gist', 'read:user', 'user:email', 'read:org'] as const;
 export const OAUTH_TTL_SECONDS = 600;
 export const OAUTH_PENDING_KEY = 'gitplus_github_oauth_pending';
